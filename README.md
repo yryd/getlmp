@@ -173,7 +173,7 @@ packmol:
 输出极简 data（Masses + Atoms），配 `ffield.reax` + `pair_style reaxff` 即可运行，集群实测通过。
 
 > 可直接运行的完整示例见 `examples/`：`cd examples && python ../main.py methane.yaml`；
-> 各阶段验收记录见 `docs/` 检查报告。
+> 设计与经验总结见 `docs/dev_notes.md`。
 
 ---
 
@@ -190,7 +190,7 @@ packmol:
 | 拓扑期望 | 多分子键/角数 == Σ count × 单分子拓扑（键合完整性） |
 
 生成的 data.lmp 同时经**集群 LAMMPS 实跑验收**（`read_data` + `run 0`，VERIFY_EXIT=0）——
-各阶段验收记录见 `docs/` 检查报告。
+验收记录见 `docs/dev_notes.md`。
 
 ### 流程会产出哪些文件（workdir 内）
 
@@ -219,10 +219,7 @@ packmol:
 | 文档 | 内容 |
 |------|------|
 | [`examples/`](examples/) | 可直接运行的示例配置（甲烷/乙醇单体 + 混合体系） |
-| [`docs/smi2data_plan.md`](docs/smi2data_plan.md) | 原始设计与需求矩阵 |
-| [`docs/phase3_resp_check_report.md`](docs/phase3_resp_check_report.md) | RESP 链路实现与验收 |
-| [`docs/phase4_reaxff_check_report.md`](docs/phase4_reaxff_check_report.md) | ReaxFF 分支实现与集群验收 |
-| [`docs/smi2data_环境搭建文档_阶段0.md`](docs/smi2data_环境搭建文档_阶段0.md) | 环境搭建与安装 |
+| [`docs/dev_notes.md`](docs/dev_notes.md) | 开发文档：规划与需求矩阵、环境搭建、技术坑、验收结论、后续方向 |
 
 ---
 
@@ -273,7 +270,7 @@ python tests/test_build_systems.py    # 甲烷/乙醇单体 + 混合体系，3/3
 
 改动后回归：运行上述测试，或在临时目录准备 `input.yaml` 执行 `python main.py input.yaml` 验证输出与校验报告。
 
-每个阶段交付：代码 + 检查报告（归档 `docs/`）。
+每个阶段交付：代码 + 检查报告（运行报告在 `workdir/_others/`，开发经验归档 `docs/dev_notes.md`）。
 
 ---
 
