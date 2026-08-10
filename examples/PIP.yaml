@@ -6,6 +6,11 @@ molecules:
   - smiles: N1CCNCC1
     name: PIP
     count: 1
+# esp 段可调 ESP 可视化导出（默认关闭；需要时开启，仅单分子 RESP 生效）：
+# esp:
+#   enabled: true         # 需要 _esp.cub + molden 时改为 true
+#   spacing: 0.3          # 网格间距 Å（0.2 更细、0.5 更快）
+#   buffer: 1.5           # 分子外扩 Å（网格覆盖范围）
 output: PIP.lmp
 workdir: work
 seed: 2026

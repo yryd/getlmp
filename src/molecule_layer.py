@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """分子层：SMILES → 3D SDF → antechamber(类型+电荷) → mol2 → parmchk2 → frcmod
 
-支持 GAFF2/GAFF 类型 + AM1-BCC / ABCG2 / RESP（QUICK）电荷；RESP2 不支持（见 docs/ 报告）。
+支持 GAFF2/GAFF 类型 + AM1-BCC / ABCG2 / RESP（QUICK）电荷；RESP2 不支持（见 docs/dev_notes.md）。
 所有外部命令（antechamber/parmchk2/sqm）均来自 conda 环境 PATH。
 """
 from __future__ import annotations
@@ -96,13 +96,14 @@ def build_molecule(cfg: Config, mc: MoleculeCfg, workdir: str) -> dict:
             '-nc', str(cfg.net_charge), '-rn', resname,
         ], workdir, 'antechamber(bcc 类型占位)')
         print(f'  antechamber(bcc) → mol2 类型就绪（电荷待 RESP 覆盖）')
-        charges = _build_resp_charges(mc, workdir, base, mol2, cfg.net_charge)
+        charges = _build_resp_charges(mc, workdir, base, mol2, cfg.net_charge,
+                                      cfg.esp.enabled)
         _apply_charges(mol2, charges)
         print(f'  RESP(QUICK) 电荷拟合完成 → {len(charges)} atoms, '
               f'sum={sum(charges):+.6f}')
-        # 归档 QUICK 的 molden（HF/6-31G* 波函数文件，VMD/Multiwfn 可读）
+        # 归档 QUICK 的 molden（HF/6-31G* 波函数文件，VMD/Multiwfn 可读；仅 esp 开启时）
         molden_src = base + '_quick.molden'
-        if os.path.exists(molden_src):
+        if cfg.esp.enabled and os.path.exists(molden_src):
             molden = base + '.molden'
             shutil.copy(molden_src, molden)
             print(f'  已归档 {os.path.basename(molden)}（QUICK 波函数，'
@@ -194,7 +195,7 @@ def _count_frcmod_lines(path: str) -> int:
 
 
 # ---------------------------------------------------------------- RESP 分支
-# RESP 电荷流程（AmberTools26 + QUICK，见 docs/phase3 报告）：
+# RESP 电荷流程（AmberTools26 + QUICK，见 docs/dev_notes.md）：
 #   mol2 → QUICK 输入(.in) → quick 算 HF/6-31G* ESP(.out+.vdw)
 #   → antechamber(-fi quick) 生成 RESP1/2.IN（原子等价性）
 #   → 手工构建 .esp（绕过 espgen -f 4 的输出 bug：缺 ESP 值列/列序错位）
@@ -207,7 +208,6 @@ def _count_frcmod_lines(path: str) -> int:
 #   4. QUICK .out 的 INPUT GEOMETRY 只打印 X/Y（缺 Z），原子坐标须从 mol2/xyz 取；
 #   5. resp 的 -e .esp 格式：ESP 在前、坐标在后、单位 Bohr（原子坐标 + MEP 点都要 Bohr）。
 BOHR = 1.889726124626
-QUICK_ESP_METHOD = 'HF BASIS=6-31G* READ_COORD ESP_CHARGE EXPORT=MOLDEN'  # RESP 标准级别 + 同时导出 molden 供可视化
 
 
 def _mol2_atoms(mol2: str) -> list[list]:
@@ -249,18 +249,22 @@ def _find_quick_basis() -> str:
         '或在 yaml 配置 quick_basis 指定路径')
 
 
-def _write_quick_input(path: str, title: str, atoms: list[list], net_charge: int) -> None:
+def _write_quick_input(path: str, title: str, atoms: list[list], net_charge: int,
+                       esp_enabled: bool = False) -> None:
     """写 QUICK 输入（$DATA 格式 + HF/6-31G* ESP_CHARGE）。
 
     READ_COORD 原子行格式 = `元素 x y z`（元素 + 3 坐标，不要原子序数列！
     QUICK 按 4 字段读，多写 Z 会把 Z 当 x、x 当 y…导致几何错乱）。
+    EXPORT=MOLDEN 仅 esp 开启时附加（供可视化；默认关闭不产出波函数文件）。
     """
-    lines = [f'$DATA = {title} RESP via getlmp', QUICK_ESP_METHOD, '']
+    method = 'HF BASIS=6-31G* READ_COORD ESP_CHARGE' + \
+        (' EXPORT=MOLDEN' if esp_enabled else '')
+    lines = [f'$DATA = {title} RESP via getlmp', method, '']
     for sym, z, x, y, zz in atoms:
         lines.append(f'{sym:<3s}{x:12.5f}{y:12.5f}{zz:12.5f}')
     lines.append('$END')
     if net_charge != 0:
-        # QUICK 电荷关键词（带电分子 RESP 仍在验证，见 docs/phase3 报告）
+        # QUICK 电荷关键词（带电分子 RESP 仍在验证，见 docs/dev_notes.md）
         lines.insert(1, f'CHARGE {net_charge}')
     with open(path, 'w') as f:
         f.write('\n'.join(lines) + '\n')
@@ -293,7 +297,8 @@ def _build_esp_file(esp_path: str, atoms_xyz: list[list], vdw_path: str) -> int:
 
 
 def _build_resp_charges(mc: MoleculeCfg, workdir: str, base: str,
-                        mol2: str, net_charge: int) -> list[float]:
+                        mol2: str, net_charge: int,
+                        esp_enabled: bool = False) -> list[float]:
     """RESP 电荷拟合（QUICK ESP + resp 两阶段），返回电荷列表。"""
     sdf = base + '.sdf'
     atoms = _mol2_atoms(mol2)
@@ -302,7 +307,7 @@ def _build_resp_charges(mc: MoleculeCfg, workdir: str, base: str,
     quick_vdw = base + '_quick.vdw'
 
     # 1. QUICK 输入 + 运行
-    _write_quick_input(quick_in, mc.name, atoms, net_charge)
+    _write_quick_input(quick_in, mc.name, atoms, net_charge, esp_enabled)
     basis = _find_quick_basis()
     env = dict(os.environ, QUICK_BASIS=basis)
     print(f'  [run] quick {os.path.basename(quick_in)} (HF/6-31G* ESP, '

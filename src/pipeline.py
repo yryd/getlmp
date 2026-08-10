@@ -381,7 +381,7 @@ def _write_report(report: dict) -> None:
         f'- 结论: {"通过" if ok else "失败"}',
     ]
     lines += [f'- {m}' for m in report['validation']['messages']]
-    if not multi and cfg.charge_method == 'resp':
+    if not multi and cfg.charge_method == 'resp' and cfg.esp.enabled:
         lines += [
             '',
             '## ESP 可视化导出（单分子 RESP）',

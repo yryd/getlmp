@@ -98,11 +98,9 @@ AmberTools 26 已内置 `BCCPARM_ABCG2.DAT` / `ATOMTYPE_ABCG2.DEF`（conda 环�
 - **packmol slab / interface 预设**：slab（双板夹层，GO 夹层接枝）与 interface
   （两相界面，TTSBI-三聚氰氯）的 inp 生成规则、用户可改/不可改字段的设计见
   git 历史中的 `smi2data_plan.md`（3.1 节）。
-- **MSTK 接入**：ommhelper（slab 修正/电场/壁势）、SFE 自由能、scheduler（Slurm 高通量），
-  需 GAFF2 zff 转换器 + mol2 电荷回填脚本。
 - **RESP2**：见第 4 节回退方案。
 
 ## 8. 交付约定
 
 每个阶段交付：代码 + 检查报告。运行检查报告随每次运行生成于 `workdir/_others/check_report.txt`
-（`organize_output: true` 时）；开发经验与验收结论归档至本文档。
+；开发经验与验收结论归档至本文档。

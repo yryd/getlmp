@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 
 import yaml
 
-SUPPORTED_CHARGE = {'bcc', 'abcg2', 'resp', 'none'}   # resp2 不支持（见 docs/ 检查报告）
+SUPPORTED_CHARGE = {'bcc', 'abcg2', 'resp', 'none'}   # resp2 不支持（见 docs/dev_notes.md）
 SUPPORTED_FF = {'gaff2', 'gaff', 'reaxff'}
 # ReaxFF 原子类型默认元素顺序（须与 ffield.reax 的元素顺序一致；可经 yaml 覆盖）
 DEFAULT_REAX_ELEMENTS = ['C', 'H', 'O', 'N', 'S', 'P', 'F', 'Cl', 'Br', 'I']
@@ -35,8 +35,8 @@ class PackmolCfg:
 
 @dataclass
 class EspCfg:
-    """ESP 可视化导出（单分子 RESP 时默认生成 _esp.cub + molden）。"""
-    enabled: bool = True     # 仅单分子 RESP 生效
+    """ESP 可视化导出（单分子 RESP 时默认不生成，需要时 esp.enabled: true 开启）。"""
+    enabled: bool = False    # 默认关闭；仅单分子 RESP 生效
     spacing: float = 0.3     # 网格间距 Å（0.2 更细、0.5 更快）
     buffer: float = 1.5      # 分子外扩 Å（网格覆盖范围）
 
@@ -86,7 +86,7 @@ def load_config(path: str) -> Config:
     if cm not in SUPPORTED_CHARGE:
         raise ValueError(
             f'不支持的 charge_method={cm!r}（支持: {sorted(SUPPORTED_CHARGE)}；'
-            f'resp2 不支持：antechamber 无该电荷方法（见 docs/ 检查报告）')
+            f'resp2 不支持：antechamber 无该电荷方法（见 docs/dev_notes.md）')
     cfg.charge_method = cm
     if ff == 'reaxff' and cm not in ('none',):
         raise ValueError(
@@ -153,11 +153,11 @@ def load_config(path: str) -> Config:
         raise ValueError(f'阶段 2 仅支持 packmol preset=bulk，当前 {cfg.packmol.preset!r}；'
                          f'slab/interface 见规划文档（后续阶段）')
 
-    # ESP 可视化导出（默认开启；仅单分子 RESP 生效）
+    # ESP 可视化导出（默认关闭；仅单分子 RESP 生效，需要时 esp.enabled: true 开启）
     esp = raw.get('esp') or {}
     if not isinstance(esp, dict):
         raise ValueError('esp 需要字典配置，如 {enabled: true, spacing: 0.3, buffer: 1.5}')
-    cfg.esp.enabled = bool(esp.get('enabled', True))
+    cfg.esp.enabled = bool(esp.get('enabled', False))
     cfg.esp.spacing = float(esp.get('spacing', 0.3))
     cfg.esp.buffer = float(esp.get('buffer', 1.5))
     if cfg.esp.spacing <= 0 or cfg.esp.buffer <= 0:
