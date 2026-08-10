@@ -65,7 +65,7 @@ molecules:
     count: 1
 output: data.lmp         # 输出 data 文件名（相对 workdir；默认 data.lmp）
 workdir: work            # 工作目录
-organize_output: true    # 跑完整理：workdir 根目录只留 output 的 lmp + 各分子 mol2，其余进 _others/
+organize_output: true    # 跑完整理：workdir 根目录只留 output 的 lmp + 各分子 mol2 + system.xyz，其余进 _others/
 ```
 
 运行（项目根目录执行）：
@@ -76,13 +76,12 @@ python main.py input.yaml
 
 可选参数：
 ```bash
-python main.py input.yaml --xyz      # 额外导出体系标准 xyz（work/system.xyz）
 python main.py input.yaml --buffer 5.0   # 单分子盒 padding（Å，默认 3.8）
 ```
 
-`--xyz` 导出的 `system.xyz` 为标准 xyz 格式（第 1 行原子数、第 2 行注释、
+每次运行默认导出 `work/system.xyz`（标准 xyz 格式：第 1 行原子数、第 2 行注释、
 随后每行 `元素 x y z`），**原子顺序与 data.lmp 完全一致**，可直接用于
-OVITO/VMD 可视化或传给其他工具。
+OVITO/VMD 可视化或传给其他工具（如 Multiwfn）。
 
 输出（节选）：
 
@@ -106,7 +105,7 @@ OVITO/VMD 可视化或传给其他工具。
 
 - `data.lmp` — LAMMPS 可直接 `read_data` 的 data 文件（文件名 = yaml `output:`，默认 `data.lmp`）
 - `work/` — 工作目录；`organize_output: true`（默认）时根目录只保留
-  `output` 的 lmp + 各分子 `{name}.mol2`，其余中间文件（检查报告、prmtop、
+  `output` 的 lmp + 各分子 `{name}.mol2` + `system.xyz`，其余中间文件（检查报告、prmtop、
   sdf、frcmod、esp.cub、molden、ANTECHAMBER_* 等）自动移入 `work/_others/`；
   同名文件默认直接覆盖只留最新一份，如需保留历史多份可设 `organize_backup: true`
 
@@ -195,12 +194,13 @@ packmol:
 
 ### 流程会产出哪些文件（workdir 内）
 
-> `organize_output: true`（默认）跑完自动整理：根目录只留 `output` 的 lmp + 各 `{name}.mol2`，
+> `organize_output: true`（默认）跑完自动整理：根目录只留 `output` 的 lmp + 各 `{name}.mol2` + `system.xyz`，
 > 下面表格里的其余文件全部移入 `work/_others/`。
 
 | 类别 | 文件 | 说明 |
 |------|------|------|
 | **主产物** | `data.lmp` | 最终 LAMMPS data（交付物） |
+| | `system.xyz` | 体系标准 xyz（原子顺序与 data.lmp 一致，OVITO/VMD/Multiwfn 用） |
 | | `check_report.txt` | 检查报告（交付物） |
 | 中间必要 | `{name}.sdf` | RDKit 3D 构象（SMILES→3D） |
 | | `{name}.mol2` | antechamber 产物：GAFF 类型+坐标+键+电荷（**任何分支默认都有**） |

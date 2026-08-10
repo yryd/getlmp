@@ -88,15 +88,24 @@ def run_getlmp(yaml_text: str, expected_atoms: int) -> None:
         assert proc.returncode == 0, f"getlmp 退出码 {proc.returncode}:\n{out}"
 
         data_path = os.path.join(tmp, "work", "data.lmp")
-        # organize_output 默认开启：data.lmp/mol2 留根目录，其余（含检查报告）进 _others/
+        xyz_path = os.path.join(tmp, "work", "system.xyz")
+        # organize_output 默认开启：data.lmp/mol2/system.xyz 留根目录，其余（含检查报告）进 _others/
         report_path = os.path.join(tmp, "work", "_others", "check_report.txt")
         assert os.path.exists(data_path), f"data.lmp 未生成:\n{out}"
         assert os.path.exists(report_path), f"check_report.txt 未生成（应在 _others/）:\n{out}"
+        assert os.path.exists(xyz_path), f"system.xyz 未生成（应默认导出）:\n{out}"
+        assert not os.path.exists(os.path.join(tmp, "work", "_others", "system.xyz")), \
+            f"system.xyz 不应被移入 _others/:\n{out}"
 
         atoms = _parse_atoms(data_path)
         assert atoms == expected_atoms, (
             f"原子数不符: 期望 {expected_atoms}, 实际 {atoms}\n{out}"
         )
+
+        # system.xyz 原子数须与 data.lmp 一致（原子顺序一致，可喂 OVITO/VMD/Multiwfn）
+        with open(xyz_path, encoding="utf-8") as f:
+            xyz_n = int(f.readline().split()[0])
+        assert xyz_n == atoms, f"system.xyz 原子数 {xyz_n} != data.lmp {atoms}\n{out}"
 
         with open(report_path, encoding="utf-8") as f:
             report = f.read()

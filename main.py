@@ -29,9 +29,6 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("input", help="input.yaml 配置文件")
     ap.add_argument("--buffer", type=float, default=None,
                     help="单分子盒 padding（Å，默认 3.8）")
-    ap.add_argument("--xyz", action="store_true",
-                    help="额外导出体系标准 xyz（workdir/system.xyz，"
-                         "原子顺序与 data.lmp 一致）")
     ap.add_argument("--version", action="version", version="getlmp 0.1.0")
     args = ap.parse_args(argv)
 
@@ -39,14 +36,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.buffer is not None:
         cfg.buffer = args.buffer
     report = run_pipeline(cfg)
-
-    if args.xyz:
-        from xyz_export import export_system_xyz  # noqa: E402
-        workdir = (cfg.workdir if os.path.isabs(cfg.workdir)
-                   else os.path.join(cfg.base_dir, cfg.workdir))
-        out = os.path.join(workdir, 'system.xyz')
-        n = export_system_xyz(report, out)
-        print(f'xyz 导出: {out} ({n} atoms)')
     return 0
 
 

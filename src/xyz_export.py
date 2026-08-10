@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""导出层：体系标准 xyz 导出（main.py --xyz）。
+"""导出层：体系标准 xyz 导出（流水线默认主产物，workdir/system.xyz）。
 
 标准 xyz 格式：第 1 行原子数；第 2 行注释；随后每行 `元素 x y z`（Å）。
 **原子顺序与 data.lmp 完全一致**（可视化/后续工具可直接对应）：

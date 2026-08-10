@@ -16,6 +16,7 @@ from export_reaxff import build_data_reaxff
 from molecule_layer import build_molecule
 from packmol_layer import (mol2_to_xyz, parse_packed_xyz, run_packmol, sdf_to_xyz, write_inp)
 from system_layer import (build_system_multi, build_system_single, count_mol2_topo)
+from xyz_export import export_system_xyz
 
 # 集群 LAMMPS 验证模板（交付物的一部分，用户/SimAgent 可据此实跑）
 # 注意：read_data 必须放在所有 style 定义之后（data 含 Coeffs 段时 LAMMPS 强制要求），
@@ -120,6 +121,10 @@ def run_pipeline(cfg: Config) -> dict:
         'esp_cub': esp_cub,
         'workdir': workdir,
     }
+    # 3c. 体系标准 xyz 导出（默认主产物；原子顺序与 data.lmp 一致，可喂 OVITO/VMD/其他工具）
+    xyz_path = os.path.join(workdir, 'system.xyz')
+    n_xyz = export_system_xyz(report, xyz_path)
+    print(f'  xyz → {os.path.basename(xyz_path)} ({n_xyz} atoms)')
     _write_report(report)
     print(f'\n==== 校验结果: {"通过" if ok else "失败"} ====')
     for m in msgs:
@@ -128,7 +133,7 @@ def run_pipeline(cfg: Config) -> dict:
     print(f'检查报告: {os.path.join(workdir, "check_report.txt")}')
 
     if cfg.organize_output:
-        keep = [exp['data_lmp']] + [m['mol2'] for m in mols if m.get('mol2')]
+        keep = [exp['data_lmp']] + [m['mol2'] for m in mols if m.get('mol2')] + [xyz_path]
         organize_workdir(workdir, keep, cfg.organize_backup)
     return report
 
@@ -217,6 +222,10 @@ def _run_pipeline_reaxff(cfg: Config, workdir: str, mols: list, multi: bool) -> 
         'data_lmp': exp['data_lmp'],
         'workdir': workdir,
     }
+    # 3c. 体系标准 xyz 导出（默认主产物；ReaxFF 多分子=packed.xyz、单分子=分子层坐标块）
+    xyz_path = os.path.join(workdir, 'system.xyz')
+    n_xyz = export_system_xyz(report, xyz_path)
+    print(f'  xyz → {os.path.basename(xyz_path)} ({n_xyz} atoms)')
     _write_report_reaxff(report)
     print(f'\n==== 校验结果: {"通过" if ok else "失败"} ====')
     for m in msgs:
@@ -225,7 +234,7 @@ def _run_pipeline_reaxff(cfg: Config, workdir: str, mols: list, multi: bool) -> 
     print(f'检查报告: {os.path.join(workdir, "check_report.txt")}')
 
     if cfg.organize_output:
-        keep = [exp['data_lmp']] + [m['mol2'] for m in mols if m.get('mol2')]
+        keep = [exp['data_lmp']] + [m['mol2'] for m in mols if m.get('mol2')] + [xyz_path]
         organize_workdir(workdir, keep, cfg.organize_backup)
     return report
 
