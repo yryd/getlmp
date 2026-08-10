@@ -6,7 +6,7 @@
 
 入口用项目内 `main.py`（无需安装）。
 每个用例都在临时目录中执行，产物（work/、data.lmp）不会写入项目目录。
-验证点：命令退出码、data.lmp 原子数、检查报告校验结论（✅ 通过）。
+验证点：命令退出码、data.lmp 原子数、检查报告校验结论（通过）。
 """
 from __future__ import annotations
 
@@ -100,7 +100,7 @@ def run_getlmp(yaml_text: str, expected_atoms: int) -> None:
 
         with open(report_path, encoding="utf-8") as f:
             report = f.read()
-        assert "✅ 通过" in report, f"校验未通过:\n{report}"
+        assert "结论: 通过" in report, f"校验未通过:\n{report}"
 
 
 def test_methane_single() -> None:
@@ -128,10 +128,10 @@ def main() -> int:
     for name, fn in tests:
         try:
             fn()
-            print(f"  ✅ {name}")
+            print(f"  通过 {name}")
         except Exception as e:  # noqa: BLE001
             failed += 1
-            print(f"  ❌ {name}: {e}")
+            print(f"  失败 {name}: {e}")
     print(f"\n{len(tests) - failed}/{len(tests)} 通过")
     return 1 if failed else 0
 

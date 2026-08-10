@@ -40,17 +40,17 @@ def validate_export(cfg: Config, result: dict, natom_input: int,
     # 1) 电荷守恒（容差 0.01）
     dq = abs(info['total_charge'] - cfg.net_charge)
     if dq <= 0.01:
-        msgs.append(f'电荷守恒: sum={info["total_charge"]:.6f} 净电荷={cfg.net_charge} ✅')
+        msgs.append(f'电荷守恒: sum={info["total_charge"]:.6f} 净电荷={cfg.net_charge} 通过')
     else:
         ok = False
-        msgs.append(f'电荷守恒失败: sum={info["total_charge"]:.6f} != 净电荷={cfg.net_charge} ❌')
+        msgs.append(f'电荷守恒: sum={info["total_charge"]:.6f} != 净电荷={cfg.net_charge} 失败')
 
     # 2) 原子数守恒（分子层含氢原子数）
     if info['natom'] == natom_input:
-        msgs.append(f'原子数守恒: {info["natom"]} == 分子层 {natom_input} ✅')
+        msgs.append(f'原子数守恒: {info["natom"]} == 分子层 {natom_input} 通过')
     else:
         ok = False
-        msgs.append(f'原子数不一致: data={info["natom"]} 分子层={natom_input} ❌')
+        msgs.append(f'原子数不一致: data={info["natom"]} 分子层={natom_input} 失败')
 
     # 3) 段计数（头部 vs 实际）
     for key in ('atoms', 'bonds', 'angles', 'dihedrals', 'impropers'):
@@ -58,8 +58,8 @@ def validate_export(cfg: Config, result: dict, natom_input: int,
         a = check.get(key + '_actual', 0)
         if h != a:
             ok = False
-            msgs.append(f'段计数不一致 {key}: 头部={h} 实际={a} ❌')
-    msgs.append('段计数: 头部与文件记录一致 ✅')
+            msgs.append(f'段计数不一致 {key}: 头部={h} 实际={a} 失败')
+    msgs.append('段计数: 头部与文件记录一致 通过')
 
     # 4) 拓扑期望（多分子键合完整：键/角数 == Σ count×单分子拓扑）
     if expected_topo:
@@ -67,10 +67,10 @@ def validate_export(cfg: Config, result: dict, natom_input: int,
         for key, exp in expected_topo.items():
             act = info[topo_key[key]]
             if act == exp:
-                msgs.append(f'拓扑期望 {key}: {act} == {exp} ✅')
+                msgs.append(f'拓扑期望 {key}: {act} == {exp} 通过')
             else:
                 ok = False
-                msgs.append(f'拓扑期望 {key}: data={act} != 期望 {exp} ❌（分子键合可能不完整）')
+                msgs.append(f'拓扑期望 {key}: data={act} != 期望 {exp} 失败（分子键合可能不完整）')
 
     # 5) 类型计数
     for key in ('atom_types', 'bond_types', 'angle_types', 'dihedral_types', 'improper_types'):
@@ -78,7 +78,7 @@ def validate_export(cfg: Config, result: dict, natom_input: int,
         a = check.get(key + '_actual', 0)
         if h != a:
             ok = False
-            msgs.append(f'类型计数不一致 {key}: 头部={h} 实际={a} ❌')
-    msgs.append('类型计数: 头部与 Coeffs 段一致 ✅')
+            msgs.append(f'类型计数不一致 {key}: 头部={h} 实际={a} 失败')
+    msgs.append('类型计数: 头部与 Coeffs 段一致 通过')
 
     return ok, msgs

@@ -121,7 +121,7 @@ def run_pipeline(cfg: Config) -> dict:
         'workdir': workdir,
     }
     _write_report(report)
-    print(f'\n==== 校验结果: {"✅ 通过" if ok else "❌ 失败"} ====')
+    print(f'\n==== 校验结果: {"通过" if ok else "失败"} ====')
     for m in msgs:
         print('  ' + m)
     print(f'\n输出: {exp["data_lmp"]}')
@@ -217,7 +217,7 @@ def _run_pipeline_reaxff(cfg: Config, workdir: str, mols: list, multi: bool) -> 
         'workdir': workdir,
     }
     _write_report_reaxff(report)
-    print(f'\n==== 校验结果: {"✅ 通过" if ok else "❌ 失败"} ====')
+    print(f'\n==== 校验结果: {"通过" if ok else "失败"} ====')
     for m in msgs:
         print('  ' + m)
     print(f'\n输出: {exp["data_lmp"]}')
@@ -237,10 +237,10 @@ def _validate_reaxff(cfg: Config, exp: dict, natom_input: int) -> tuple[bool, li
     ok = True
 
     if info['natom'] == natom_input:
-        msgs.append(f'原子数守恒: {info["natom"]} == 分子层 {natom_input} ✅')
+        msgs.append(f'原子数守恒: {info["natom"]} == 分子层 {natom_input} 通过')
     else:
         ok = False
-        msgs.append(f'原子数不一致: data={info["natom"]} 分子层={natom_input} ❌')
+        msgs.append(f'原子数不一致: data={info["natom"]} 分子层={natom_input} 失败')
 
     # 无键项
     for key in ('bonds', 'angles', 'dihedrals', 'impropers'):
@@ -248,8 +248,8 @@ def _validate_reaxff(cfg: Config, exp: dict, natom_input: int) -> tuple[bool, li
         a = check.get(key + '_actual', 0)
         if h != a:
             ok = False
-            msgs.append(f'段计数不一致 {key}: 头部={h} 实际={a} ❌')
-    msgs.append('段计数: 头部与文件记录一致 ✅（无键项，ReaxFF 预期）')
+            msgs.append(f'段计数不一致 {key}: 头部={h} 实际={a} 失败')
+    msgs.append('段计数: 头部与文件记录一致 通过（无键项，ReaxFF 预期）')
 
     # 类型计数
     for key in ('atom_types', 'bond_types', 'angle_types', 'dihedral_types', 'improper_types'):
@@ -257,11 +257,11 @@ def _validate_reaxff(cfg: Config, exp: dict, natom_input: int) -> tuple[bool, li
         a = check.get(key + '_actual', 0)
         if h != a:
             ok = False
-            msgs.append(f'类型计数不一致 {key}: 头部={h} 实际={a} ❌')
-    msgs.append('类型计数: 头部与 Coeffs 段一致 ✅')
+            msgs.append(f'类型计数不一致 {key}: 头部={h} 实际={a} 失败')
+    msgs.append('类型计数: 头部与 Coeffs 段一致 通过')
 
     # 电荷列全 0（QEq 待算）
-    msgs.append(f'电荷: 初始 0.0（QEq/reax 模拟中计算）✅')
+    msgs.append(f'电荷: 初始 0.0（QEq/reax 模拟中计算）通过')
     return ok, msgs
 
 
@@ -304,7 +304,7 @@ def _write_report_reaxff(report: dict) -> None:
         f'- 元素顺序（类型号→元素）: {cfg.reax_elements}',
         '',
         '## 校验',
-        f'- 结论: {"✅ 通过" if ok else "❌ 失败"}',
+        f'- 结论: {"通过" if ok else "失败"}',
     ]
     lines += [f'- {m}' for m in report['validation']['messages']]
     lines += [
@@ -378,7 +378,7 @@ def _write_report(report: dict) -> None:
         f'- 盒: {info["box"]}',
         '',
         '## 校验',
-        f'- 结论: {"✅ 通过" if ok else "❌ 失败"}',
+        f'- 结论: {"通过" if ok else "失败"}',
     ]
     lines += [f'- {m}' for m in report['validation']['messages']]
     if not multi and cfg.charge_method == 'resp':
