@@ -35,8 +35,8 @@ class PackmolCfg:
 
 @dataclass
 class EspCfg:
-    """ESP 可视化导出（单分子 RESP 时默认不生成，需要时 esp.enabled: true 开启）。"""
-    enabled: bool = False    # 默认关闭；仅单分子 RESP 生效
+    """ESP 可视化导出（单分子 RESP 时默认生成 _esp.cub + molden）。"""
+    enabled: bool = True     # 仅单分子 RESP 生效
     spacing: float = 0.3     # 网格间距 Å（0.2 更细、0.5 更快）
     buffer: float = 1.5      # 分子外扩 Å（网格覆盖范围）
 
@@ -54,6 +54,7 @@ class Config:
     workdir: str = 'work'
     seed: int = 2026
     organize_output: bool = True   # 跑完只留 lmp+mol2，其余进 workdir/_others/
+    organize_backup: bool = False  # _others/ 已存在同名时：false=覆盖只留最新，true=追加 HHMMSS 时间戳保留多份
     buffer: float = 3.8        # 单分子盒 padding（Å，仅 count=1 时使用）
     reax_elements: list = field(default_factory=lambda: list(DEFAULT_REAX_ELEMENTS))
     reax_atom_style: str = 'charge'   # charge(6 列,无 mol-id) / full(7 列,带 mol-id)
@@ -115,6 +116,7 @@ def load_config(path: str) -> Config:
     cfg.workdir = str(raw.get('workdir', cfg.workdir))
     cfg.seed = int(raw.get('seed', cfg.seed))
     cfg.organize_output = bool(raw.get('organize_output', cfg.organize_output))
+    cfg.organize_backup = bool(raw.get('organize_backup', cfg.organize_backup))
     cfg.buffer = float(raw.get('buffer', cfg.buffer))
 
     mols = raw.get('molecules')
@@ -153,11 +155,11 @@ def load_config(path: str) -> Config:
         raise ValueError(f'阶段 2 仅支持 packmol preset=bulk，当前 {cfg.packmol.preset!r}；'
                          f'slab/interface 见规划文档（后续阶段）')
 
-    # ESP 可视化导出（默认关闭；仅单分子 RESP 生效，需要时 esp.enabled: true 开启）
+    # ESP 可视化导出（默认开启；仅单分子 RESP 生效）
     esp = raw.get('esp') or {}
     if not isinstance(esp, dict):
         raise ValueError('esp 需要字典配置，如 {enabled: true, spacing: 0.3, buffer: 1.5}')
-    cfg.esp.enabled = bool(esp.get('enabled', False))
+    cfg.esp.enabled = bool(esp.get('enabled', True))
     cfg.esp.spacing = float(esp.get('spacing', 0.3))
     cfg.esp.buffer = float(esp.get('buffer', 1.5))
     if cfg.esp.spacing <= 0 or cfg.esp.buffer <= 0:

@@ -129,13 +129,14 @@ def run_pipeline(cfg: Config) -> dict:
 
     if cfg.organize_output:
         keep = [exp['data_lmp']] + [m['mol2'] for m in mols if m.get('mol2')]
-        organize_workdir(workdir, keep)
+        organize_workdir(workdir, keep, cfg.organize_backup)
     return report
 
 
-def organize_workdir(workdir: str, keep: list[str]) -> None:
+def organize_workdir(workdir: str, keep: list[str], backup: bool = False) -> None:
     """跑完整理：workdir 根目录只保留 keep 列表（如 data.lmp、*.mol2），
-    其余文件/子目录全部移入 workdir/_others/（重名自动加时间戳后缀）；
+    其余文件/子目录全部移入 workdir/_others/；
+    backup=True 时重名自动加 HHMMSS 时间戳保留多份，False（默认）同名直接覆盖只留最新；
     纯临时目录（_resp_tmp_*，RESP 拟合中间）不保留，直接删除。
 
     keep 用绝对路径比较；_others 目录本身不动。
@@ -155,7 +156,7 @@ def organize_workdir(workdir: str, keep: list[str]) -> None:
             deleted.append(entry)
             continue
         dst = os.path.join(others, entry)
-        if os.path.exists(dst):
+        if os.path.exists(dst) and backup:
             import time
             stamp = time.strftime('%H%M%S')
             base, ext = os.path.splitext(entry)
@@ -225,7 +226,7 @@ def _run_pipeline_reaxff(cfg: Config, workdir: str, mols: list, multi: bool) -> 
 
     if cfg.organize_output:
         keep = [exp['data_lmp']] + [m['mol2'] for m in mols if m.get('mol2')]
-        organize_workdir(workdir, keep)
+        organize_workdir(workdir, keep, cfg.organize_backup)
     return report
 
 

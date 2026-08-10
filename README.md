@@ -25,7 +25,7 @@ python main.py input.yaml    # → data.lmp + work/check_report.txt
 - **单分子与多分子体系**：单分子自动建盒；多分子用 packmol 装盒，支持任意分子组成
 - **完整拓扑**：键/角/二面角/improper 参数由 antechamber + parmchk2 补齐，导出 atom_style full
 - **内置校验**：电荷守恒、原子数守恒、段计数、几何自检，跑完即出报告
-- **ESP 可视化导出**：`esp.enabled: true` 时，单分子 RESP 产出 `{name}_esp.cub`（静电势网格）与 `{name}.molden`（QUICK 波函数），VMD/Multiwfn 直接看图（默认关闭）
+- **ESP 可视化导出**：单分子 RESP 自动产出 `{name}_esp.cub`（静电势网格）与 `{name}.molden`（QUICK 波函数），VMD/Multiwfn 直接看图
 - **集群实测过**：生成的 data.lmp 已多次通过集群 LAMMPS `read_data` + `run 0` 实跑验收
 - **可配置**：力场/电荷/装盒参数全部走 yaml，改两行配置即可切换需求
 
@@ -107,7 +107,8 @@ OVITO/VMD 可视化或传给其他工具。
 - `data.lmp` — LAMMPS 可直接 `read_data` 的 data 文件（文件名 = yaml `output:`，默认 `data.lmp`）
 - `work/` — 工作目录；`organize_output: true`（默认）时根目录只保留
   `output` 的 lmp + 各分子 `{name}.mol2`，其余中间文件（检查报告、prmtop、
-  sdf、frcmod、esp.cub、molden、ANTECHAMBER_* 等）自动移入 `work/_others/`
+  sdf、frcmod、esp.cub、molden、ANTECHAMBER_* 等）自动移入 `work/_others/`；
+  同名文件默认直接覆盖只留最新一份，如需保留历史多份可设 `organize_backup: true`
 
 ---
 
@@ -144,14 +145,14 @@ molecules:
   - smiles: c1ccccc1
     name: benzene
     count: 1
-# esp 段可调 ESP 导出（默认关闭；需要时开启，仅单分子 RESP 生效）：
+# esp 段可调 ESP 导出（默认开启，仅单分子 RESP 生效）：
 # esp:
-#   enabled: true   # 需要 ESP 可视化时改为 true
+#   enabled: true   # 不需要 ESP 可视化时改为 false
 #   spacing: 0.3    # 网格间距 Å（0.2 更细、0.5 更快）
 #   buffer: 1.5     # 分子外扩范围 Å
 ```
 
-开启 `esp.enabled: true` 时，单分子 RESP 多产出两个可视化文件（workdir 内）：
+单分子 RESP 时自动多产出两个可视化文件（workdir 内）：
 - `{name}_esp.cub`：静电势网格（点电荷库仑近似，Gaussian cube 格式，VMD/Multiwfn 可读）
 - `{name}.molden`：QUICK HF/6-31G* 波函数（严格 ESP/轨道分析请用 Multiwfn 读它）
 
@@ -209,7 +210,7 @@ packmol:
 | | `sqm.in/out/pdb` | AM1-BCC 半经验计算（仅 BCC/ABCG2） |
 | RESP 额外 | `{name}_quick.in/.out/.vdw` | QUICK 输入/日志/vdW 表面 ESP 点 |
 | | `_resp_tmp_{name}/` | resp 两阶段拟合中间目录 |
-| | `{name}_esp.cub` + `{name}.molden` | ESP 网格 + 波函数（可视化，`esp.enabled: true` 时） |
+| | `{name}_esp.cub` + `{name}.molden` | ESP 网格 + 波函数（可视化） |
 | 噪音残留 | `ANTECHAMBER_*.AC`、`ATOMTYPE.INF` | antechamber 临时文件，可忽略/删除 |
 
 ---
