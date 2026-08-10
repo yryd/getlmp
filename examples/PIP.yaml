@@ -1,7 +1,9 @@
 name: PIP
 forcefield: gaff2        # gaff2 / gaff / reaxff
-charge_method: resp       # bcc (AM1-BCC) / abcg2 / resp（reaxff 时为 none）
+charge_method: resp       # bcc (AM1-BCC) / abcg2 / resp / resp2（reaxff 时为 none）
 net_charge: 0
+qm:
+  engine: quick           # RESP 的 QM 引擎：gaussian（默认，G16+Multiwfn）/ quick（QUICK 旧路径）
 molecules:
   - smiles: N1CCNCC1
     name: PIP

@@ -1,8 +1,12 @@
 #!/usr/bin/env python
 """分子层：SMILES → 3D SDF → antechamber(类型+电荷) → mol2 → parmchk2 → frcmod
 
-支持 GAFF2/GAFF 类型 + AM1-BCC / ABCG2 / RESP（QUICK）电荷；RESP2 不支持（见 docs/dev_notes.md）。
-所有外部命令（antechamber/parmchk2/sqm）均来自 conda 环境 PATH。
+支持 GAFF2/GAFF 类型 + AM1-BCC / ABCG2 / RESP / RESP2 电荷。
+RESP/RESP2 的 QM 引擎由 cfg.qm 决定：
+- engine=gaussian（默认）：G16 单点（pop=MK ESP）+ Multiwfn 拟合（531 路线）
+- engine=quick（旧路径）：QUICK HF/6-31G* + resp 两阶段拟合
+所有外部命令（antechamber/parmchk2/sqm/g16/quick/Multiwfn）来自 conda 环境 PATH
+或 qm 配置路径。
 """
 from __future__ import annotations
 
@@ -79,34 +83,52 @@ def build_molecule(cfg: Config, mc: MoleculeCfg, workdir: str) -> dict:
         elements, coords = _sdf_elements_coords(sdf)
         print(f'  ReaxFF: {len(elements)} atoms, 元素 {sorted(set(elements))}'
               f'（类型/电荷由 ffield.reax + QEq 在 LAMMPS 中处理）')
-        return {'sdf': sdf, 'mol2': None, 'frcmod': None, 'molden': None,
+        return {'sdf': sdf, 'mol2': None, 'frcmod': None, 'wavefn': None,
                 'elements': elements, 'coords': coords, 'natom': natom,
                 'n_extra': 0}
 
     mol2 = base + '.mol2'
     frcmod = base + '.frcmod'
-    molden = None   # 仅 RESP 分支（QUICK EXPORT=MOLDEN）生成
+    wavefn = None   # 仅 RESP/RESP2 分支生成（gaussian→.fch，quick→.molden）
     resname = (mc.resname or mc.name[:3]).upper()[:3]
 
-    if cfg.charge_method == 'resp':
-        # RESP 分支：先用 bcc 生成类型正确的 mol2（临时电荷），再 QUICK+resp 拟合覆盖
+    if cfg.charge_method in ('resp', 'resp2'):
+        # RESP/RESP2 分支：先用 bcc 生成类型正确的 mol2（临时电荷），再 QM 拟合覆盖
         _run([
             'antechamber', '-i', sdf, '-fi', 'sdf', '-o', mol2, '-fo', 'mol2',
             '-c', 'bcc', '-at', cfg.forcefield,
             '-nc', str(cfg.net_charge), '-rn', resname,
         ], workdir, 'antechamber(bcc 类型占位)')
-        print(f'  antechamber(bcc) → mol2 类型就绪（电荷待 RESP 覆盖）')
-        charges = _build_resp_charges(mc, workdir, base, mol2, cfg.net_charge,
-                                      cfg.esp.enabled)
+        print(f'  antechamber(bcc) → mol2 类型就绪（电荷待 QM 拟合覆盖）')
+        if cfg.charge_method == 'resp2':
+            charges = _build_resp2_charges(mc, workdir, base, mol2,
+                                           cfg.net_charge, cfg.qm)
+            label = f'RESP2({cfg.qm.engine})'
+        else:
+            charges = _build_resp_charges(mc, workdir, base, mol2,
+                                          cfg.net_charge, cfg.esp.enabled, cfg.qm)
+            label = f'RESP({cfg.qm.engine})'
         _apply_charges(mol2, charges)
-        print(f'  RESP(QUICK) 电荷拟合完成 → {len(charges)} atoms, '
+        print(f'  {label} 电荷拟合完成 → {len(charges)} atoms, '
               f'sum={sum(charges):+.6f}')
-        # 归档 QUICK 的 molden（HF/6-31G* 波函数文件，VMD/Multiwfn 可读；仅 esp 开启时）
-        molden_src = base + '_quick.molden'
-        if cfg.esp.enabled and os.path.exists(molden_src):
-            molden = base + '.molden'
-            shutil.copy(molden_src, molden)
-            print(f'  已归档 {os.path.basename(molden)}（QUICK 波函数，'
+        # 归档波函数文件（esp 开启时；gaussian→.fch（RESP2 用溶剂 .fch），
+        # quick→.molden，VMD/Multiwfn 可视化与二次分析用）
+        if cfg.charge_method == 'resp2':
+            wavefn_src = base + '_solv.fch'
+            wavefn_ext = 'fch'
+        elif cfg.qm.engine == 'gaussian':
+            wavefn_src = base + '.fch'
+            wavefn_ext = 'fch'
+        else:
+            wavefn_src = base + '_quick.molden'
+            wavefn_ext = 'molden'
+        if cfg.esp.enabled and os.path.exists(wavefn_src):
+            wavefn = base + '.' + wavefn_ext
+            if os.path.abspath(wavefn_src) == os.path.abspath(wavefn):
+                wavefn = wavefn_src   # 已是最终位置（gaussian 路径 .fch），无需复制
+            else:
+                shutil.copy(wavefn_src, wavefn)
+            print(f'  已归档 {os.path.basename(wavefn)}（波函数，'
                   f'可视化/二次分析用）')
     else:
         _run([
@@ -126,7 +148,7 @@ def build_molecule(cfg: Config, mc: MoleculeCfg, workdir: str) -> dict:
     else:
         print('  parmchk2 → frcmod（空：参数全部来自 GAFF 标准库）')
 
-    return {'sdf': sdf, 'mol2': mol2, 'frcmod': frcmod, 'molden': molden,
+    return {'sdf': sdf, 'mol2': mol2, 'frcmod': frcmod, 'wavefn': wavefn,
             'natom': natom, 'n_extra': n_extra}
 
 
@@ -195,11 +217,15 @@ def _count_frcmod_lines(path: str) -> int:
 
 
 # ---------------------------------------------------------------- RESP 分支
-# RESP 电荷流程（AmberTools26 + QUICK，见 docs/dev_notes.md）：
-#   mol2 → QUICK 输入(.in) → quick 算 HF/6-31G* ESP(.out+.vdw)
-#   → antechamber(-fi quick) 生成 RESP1/2.IN（原子等价性）
-#   → 手工构建 .esp（绕过 espgen -f 4 的输出 bug：缺 ESP 值列/列序错位）
-#   → resp 两阶段拟合 → QOUT 电荷 → 写回 mol2（保留 gaff2 类型）
+# RESP 电荷流程：按 qm.engine 分派
+#   engine=gaussian（默认，531 路线）：
+#     mol2 → gjf（B3LYP/def2-TZVP + pop=MK ESP，可选 PCM 溶剂）
+#     → g16 单点 → formchk(.fch) → Multiwfn RESP/RESP2 拟合 → 电荷
+#   engine=quick（旧路径保留，见 docs/dev_notes.md）：
+#     mol2 → QUICK 输入(.in) → quick 算 HF/6-31G* ESP(.out+.vdw)
+#     → antechamber(-fi quick) 生成 RESP1/2.IN（原子等价性）
+#     → 手工构建 .esp（绕过 espgen -f 4 的输出 bug：缺 ESP 值列/列序错位）
+#     → resp 两阶段拟合 → QOUT 电荷 → 写回 mol2（保留 gaff2 类型）
 #
 # 已知坑（2026-08-09 实测，ambertools 26.0 conda + QUICK 2025）：
 #   1. `-c resp` 必须提供外部 QM 输出（-fi quick/gout/gesp/gamess），不能一步完成；
@@ -208,6 +234,37 @@ def _count_frcmod_lines(path: str) -> int:
 #   4. QUICK .out 的 INPUT GEOMETRY 只打印 X/Y（缺 Z），原子坐标须从 mol2/xyz 取；
 #   5. resp 的 -e .esp 格式：ESP 在前、坐标在后、单位 Bohr（原子坐标 + MEP 点都要 Bohr）。
 BOHR = 1.889726124626
+
+_DEFAULT_G16_CANDS = [
+    os.path.expanduser('~/packages/soft/g16/g16'),
+    '/home/yryd/packages/soft/g16/g16',
+]
+_DEFAULT_G16_SCRATCH = os.path.expanduser('~/packages/soft/scratch')
+
+
+def _find_g16root(qm) -> str:
+    """探测 g16 安装目录（含 g16 可执行）。顺序：qm.g16root → env → 默认路径。"""
+    cands = [qm.g16root or '', os.environ.get('g16root', '')] + _DEFAULT_G16_CANDS
+    for c in cands:
+        if c and os.path.isfile(os.path.join(c, 'g16')):
+            return c
+    raise RuntimeError(
+        '找不到 g16 安装目录。请设置 qm.g16root（如 /home/yryd/packages/soft/g16/g16）'
+        '或安装到 ~/packages/soft/g16/g16')
+
+
+def _g16_env(qm) -> dict:
+    """构建 g16 子进程环境（对应 scripts/g16env.sh，仅 subprocess 内注入）。"""
+    root = _find_g16root(qm)
+    env = dict(os.environ)
+    env.update({
+        'g16root': root,
+        'GAUSS_EXEDIR': f'{root}/bsd:{root}/utility:{root}',
+        'GAUSS_SCRDIR': env.get('GAUSS_SCRDIR', _DEFAULT_G16_SCRATCH),
+        'LD_LIBRARY_PATH': f'{root}/bsd:{root}',
+        'PATH': f'{root}:' + env.get('PATH', ''),
+    })
+    return env
 
 
 def _mol2_atoms(mol2: str) -> list[list]:
@@ -270,6 +327,86 @@ def _write_quick_input(path: str, title: str, atoms: list[list], net_charge: int
         f.write('\n'.join(lines) + '\n')
 
 
+def _write_gaussian_input(path: str, title: str, atoms: list[list],
+                          net_charge: int, qm, chk_path: str,
+                          solvent: str | None = None) -> None:
+    """写 g16 输入：B3LYP/def2TZVP + pop=MK ESP（531 路线关键词）。
+
+    route = #p {method}/{basis} em=GD3BJ pop=MK IOp(6/33=2,6/42=6)
+            + scrf=(smd,solvent=xxx)（溶剂非空时） + opt（qm.opt）
+    坐标来自 mol2（不重排原子序）；多重度固定 1（闭壳层）。
+    solvent 参数可覆盖 qm.solvent（RESP2 气相单点传 ''）。
+
+    坑（2026-08-11 实测 G16 RevC.01）：
+    - `0 1` 行后**不能有空行**，否则 l101 报 "There are no atoms"；
+    - def2 基组名带连字符（def2-TZVP）会触发 route 语法错误，需转 def2TZVP。
+    """
+    basis = qm.basis.replace('def2-', 'def2')   # def2-TZVP → def2TZVP
+    solv = qm.solvent if solvent is None else solvent
+    route = f'#p {qm.method}/{basis} em=GD3BJ pop=MK IOp(6/33=2,6/42=6)'
+    if solv:
+        route += f' scrf=(smd,solvent={solv})'
+    if qm.opt:
+        route += ' opt'
+    lines = [
+        f'%nprocshared={os.environ.get("SMI2DATA_NPROC", "8")}',
+        f'%mem={os.environ.get("SMI2DATA_MEM", "4GB")}',
+        f'%chk={os.path.abspath(chk_path)}',
+        route,
+        '',
+        f'{title} RESP via getlmp ({qm.method}/{basis})',
+        '',
+        f'{net_charge} 1',
+    ]
+    for sym, _z, x, y, zz in atoms:
+        lines.append(f'{sym:<3s}{x:12.6f}{y:12.6f}{zz:12.6f}')
+    lines.append('')
+    with open(path, 'w') as f:
+        f.write('\n'.join(lines) + '\n')
+
+
+def _run_gaussian(gjf: str, workdir: str, qm) -> str:
+    """运行 g16 单点，返回 log 路径；检查 Normal termination。"""
+    log = os.path.splitext(gjf)[0] + '.log'
+    env = _g16_env(qm)
+    print(f'  [run] g16 {os.path.basename(gjf)} '
+          f'({qm.method}/{qm.basis}'
+          + (f' + {qm.solvent}' if qm.solvent else '')
+          + ', pop=MK ESP)')
+    try:
+        r = subprocess.run(['g16', os.path.basename(gjf), os.path.basename(log)],
+                           cwd=workdir, capture_output=True, text=True,
+                           env=env, timeout=3600)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f'g16 超时（>1h）: {gjf}')
+    log_full = os.path.join(workdir, log)
+    if not os.path.exists(log_full) or \
+            'Normal termination' not in open(log_full).read():
+        tail = ''
+        if os.path.exists(log_full):
+            tail = open(log_full).read()[-1500:]
+        raise RuntimeError(
+            f'g16 运行失败（无 Normal termination）\n'
+            f'--- stdout ---\n{r.stdout[-800:]}\n'
+            f'--- stderr ---\n{r.stderr[-800:]}\n'
+            f'--- log 尾部 ---\n{tail}')
+    return log
+
+
+def _run_formchk(chk: str, fch: str, workdir: str, qm) -> str:
+    """formchk: .chk → .fch（格式波函数，Multiwfn 可读）。"""
+    root = _find_g16root(qm)
+    env = _g16_env(qm)
+    r = subprocess.run(
+        [os.path.join(root, 'formchk'), os.path.basename(chk),
+         os.path.basename(fch)],
+        cwd=workdir, capture_output=True, text=True, env=env, timeout=300)
+    if not os.path.exists(os.path.join(workdir, fch)):
+        raise RuntimeError(f'formchk 失败\n--- stdout ---\n{r.stdout[-800:]}\n'
+                           f'--- stderr ---\n{r.stderr[-800:]}')
+    return fch
+
+
 def _build_esp_file(esp_path: str, atoms_xyz: list[list], vdw_path: str) -> int:
     """构建 resp 可读的 .esp（绕过 espgen bug）。
 
@@ -297,9 +434,76 @@ def _build_esp_file(esp_path: str, atoms_xyz: list[list], vdw_path: str) -> int:
 
 
 def _build_resp_charges(mc: MoleculeCfg, workdir: str, base: str,
-                        mol2: str, net_charge: int,
-                        esp_enabled: bool = False) -> list[float]:
-    """RESP 电荷拟合（QUICK ESP + resp 两阶段），返回电荷列表。"""
+                        mol2: str, net_charge: int, esp_enabled: bool,
+                        qm) -> list[float]:
+    """RESP 电荷拟合入口：按 qm.engine 分派（gaussian 主路径 / quick 旧路径）。"""
+    if qm.engine == 'gaussian':
+        return _build_resp_charges_gaussian(mc, workdir, base, mol2,
+                                            net_charge, qm)
+    if qm.engine == 'quick':
+        return _build_resp_charges_quick(mc, workdir, base, mol2,
+                                         net_charge, esp_enabled)
+    raise ValueError(f'不支持的 qm.engine={qm.engine!r}')
+
+
+def _build_resp_charges_gaussian(mc: MoleculeCfg, workdir: str, base: str,
+                                 mol2: str, net_charge: int, qm) -> list[float]:
+    """RESP（Gaussian + Multiwfn，531 路线）：
+    gjf 单点（pop=MK）→ g16 → formchk(.fch) → Multiwfn 7→18→1 拟合 → 电荷。
+    """
+    from multiwfn import resp_from_fch
+
+    atoms = _mol2_atoms(mol2)
+    gjf = base + '.gjf'
+    chk = base + '.chk'
+    fch = base + '.fch'
+
+    _write_gaussian_input(gjf, mc.name, atoms, net_charge, qm, chk)
+    _run_gaussian(gjf, workdir, qm)
+    _run_formchk(chk, fch, workdir, qm)
+    print(f'  [run] Multiwfn RESP 拟合 ← {os.path.basename(fch)}')
+    charges, _chg = resp_from_fch(fch, workdir=workdir,
+                                  multiwfn_path=qm.multiwfn_path)
+    if len(charges) != len(atoms):
+        raise RuntimeError(f'RESP 电荷数 {len(charges)} != 原子数 {len(atoms)}')
+    return charges
+
+
+def _build_resp2_charges(mc: MoleculeCfg, workdir: str, base: str,
+                         mol2: str, net_charge: int, qm) -> list[float]:
+    """RESP2（Gaussian + Multiwfn）：气相与溶剂(PCM)各单点 → 各自 RESP → δ 混合。
+
+    q = (1-δ)*q_gas + δ*q_solv，对应官方 calcRESP.sh 逻辑。
+    """
+    from multiwfn import resp2_from_fch
+
+    atoms = _mol2_atoms(mol2)
+    gjf_gas, chk_gas, fch_gas = base + '_gas.gjf', base + '_gas.chk', base + '_gas.fch'
+    gjf_solv, chk_solv, fch_solv = base + '_solv.gjf', base + '_solv.chk', base + '_solv.fch'
+
+    # 气相单点
+    _write_gaussian_input(gjf_gas, mc.name, atoms, net_charge, qm, chk_gas,
+                          solvent='')
+    _run_gaussian(gjf_gas, workdir, qm)
+    _run_formchk(chk_gas, fch_gas, workdir, qm)
+    # 溶剂单点（PCM）
+    _write_gaussian_input(gjf_solv, mc.name, atoms, net_charge, qm, chk_solv,
+                          solvent=qm.solvent)
+    _run_gaussian(gjf_solv, workdir, qm)
+    _run_formchk(chk_solv, fch_solv, workdir, qm)
+    # Multiwfn RESP2（两次 RESP + δ 混合）
+    print(f'  [run] Multiwfn RESP2 拟合 ← gas + {qm.solvent} (δ={qm.delta})')
+    charges = resp2_from_fch(fch_gas, fch_solv, qm.delta, workdir=workdir,
+                             multiwfn_path=qm.multiwfn_path)
+    if len(charges) != len(atoms):
+        raise RuntimeError(f'RESP2 电荷数 {len(charges)} != 原子数 {len(atoms)}')
+    return charges
+
+
+def _build_resp_charges_quick(mc: MoleculeCfg, workdir: str, base: str,
+                              mol2: str, net_charge: int,
+                              esp_enabled: bool = False) -> list[float]:
+    """RESP 电荷拟合（QUICK ESP + resp 两阶段，旧路径），返回电荷列表。"""
     sdf = base + '.sdf'
     atoms = _mol2_atoms(mol2)
     quick_in = base + '_quick.in'

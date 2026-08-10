@@ -3,8 +3,8 @@
 <!-- 徽章行 -->
 [![version](https://img.shields.io/badge/version-0.1.0-blue)](https://github.com/)
 [![forcefield](https://img.shields.io/badge/forcefield-GAFF2%20%7C%20ReaxFF-orange)]()
-[![charge](https://img.shields.io/badge/charge-AM1--BCC%20%7C%20RESP%20%7C%20ABCG2-green)]()
-[![status](https://img.shields.io/badge/status-阶段0--4%20闭环-yellow)]()
+[![charge](https://img.shields.io/badge/charge-AM1--BCC%20%7C%20RESP%20%7C%20RESP2%20%7C%20ABCG2-green)]()
+[![status](https://img.shields.io/badge/status-阶段0--5%20闭环-yellow)]()
 
 **一条命令，从 SMILES 到可运行的 LAMMPS `data.lmp`。**
 
@@ -21,11 +21,14 @@ python main.py input.yaml    # → data.lmp + work/check_report.txt
 ## Features
 
 - **多力场**：GAFF2/GAFF（经典全原子，GAFF2 参数取自 AmberTools 26 内置 gaff2.dat v2.2.30/2025）与 ReaxFF（反应力场，极简坐标 data）
-- **多电荷方案**：AM1-BCC（默认）、RESP（开源 QUICK 量子化学拟合）、ABCG2，全部自动
+- **多电荷方案**：AM1-BCC（默认）、RESP / RESP2（Gaussian 16 + Multiwfn 拟合，
+  531 路线）、ABCG2；RESP 亦可回退 QUICK（开源）引擎
 - **单分子与多分子体系**：单分子自动建盒；多分子用 packmol 装盒，支持任意分子组成
 - **完整拓扑**：键/角/二面角/improper 参数由 antechamber + parmchk2 补齐，导出 atom_style full
 - **内置校验**：电荷守恒、原子数守恒、段计数、几何自检，跑完即出报告
-- **ESP 可视化导出**：单分子 RESP 自动产出 `{name}_esp.cub`（静电势网格）与 `{name}.molden`（QUICK 波函数），VMD/Multiwfn 直接看图
+- **ESP 可视化导出**：单分子 RESP 自动产出 `{name}_esp.vtx.pdb`（密度 0.001 闭合
+  等值面，B 因子=ESP）与 `{name}_esp.cub`（Multiwfn 严格 QM ESP，Gaussian 引擎时），
+  VMD Beta 着色直接看图；QUICK 引擎回退点电荷近似 cube
 - **集群实测过**：生成的 data.lmp 已多次通过集群 LAMMPS `read_data` + `run 0` 实跑验收
 - **可配置**：力场/电荷/装盒参数全部走 yaml，改两行配置即可切换需求
 
@@ -134,12 +137,21 @@ packmol:
 
 输出 4200 原子、完整键合拓扑（水 O-H 键齐全），集群 LAMMPS 实跑通过。
 
-### 场景 2：RESP 电荷（开源 QUICK，HF/6-31G* 两阶段拟合）
+### 场景 2：RESP / RESP2 电荷（Gaussian 16 + Multiwfn，531 路线）
 
 ```yaml
 name: benzene_resp
 forcefield: gaff2
-charge_method: resp        # ← 只改这一行
+charge_method: resp        # resp / resp2（RESP2 需 qm.resp2 + qm.solvent）
+net_charge: 0
+qm:
+  engine: gaussian         # gaussian（默认，G16+Multiwfn）/ quick（QUICK 旧路径）
+  method: b3lyp            # 531 推荐 B3LYP-D3(BJ)
+  basis: def2TZVP          # G16 命名（def2-TZVP 连字符写法自动兼容）
+  # solvent: water         # 空=气相；RESP2 需要溶剂（PCM 单点）
+  # resp2: true            # RESP2 开关（需 solvent 非空）
+  # delta: 0.5             # RESP2 δ 混合系数
+  # multiwfn_path: ''      # 空=自动探测（~/packages/soft/multiwfn/）
 molecules:
   - smiles: c1ccccc1
     name: benzene
@@ -151,9 +163,17 @@ molecules:
 #   buffer: 1.5     # 分子外扩范围 Å
 ```
 
-单分子 RESP 时自动多产出两个可视化文件（workdir 内）：
-- `{name}_esp.cub`：静电势网格（点电荷库仑近似，Gaussian cube 格式，VMD/Multiwfn 可读）
-- `{name}.molden`：QUICK HF/6-31G* 波函数（严格 ESP/轨道分析请用 Multiwfn 读它）
+流程：SMILES → 3D → antechamber（bcc 类型占位）→ g16 单点（pop=MK ESP）
+→ formchk → Multiwfn RESP 拟合 → 电荷写回 mol2 → tleap → data.lmp。
+
+单分子 RESP/RESP2 时自动多产出可视化文件（workdir 内）：
+- `{name}_esp.vtx.pdb`：Multiwfn 密度 0.001 闭合等值面，B 因子字段存 ESP
+  （kcal/mol），VMD 用 Beta 着色直接看图
+- `{name}_esp.cub`：Multiwfn 严格 QM ESP cube（电子云积分，非点电荷近似）
+- `{name}.fch`：Gaussian 格式波函数（Multiwfn/VMD 二次分析用）
+
+RESP 亦可回退 QUICK 引擎（`qm.engine: quick`，HF/6-31G* + resp 两阶段拟合，
+输出 molden + 点电荷近似 cube），示例见 `examples/PIP.yaml`。
 
 ### 场景 3：ReaxFF 反应力场（坐标 + 元素，无键项，QEq 模拟中算）
 
@@ -227,8 +247,10 @@ packmol:
 ## FAQ
 
 **Q: 支持哪些力场和电荷？**
-GAFF2/GAFF + AM1-BCC（默认）、RESP、ABCG2；ReaxFF（QEq 电荷模拟中算）。
-RESP2 当前环境不支持（AmberTools 无 `-c resp2`、QUICK 无隐式溶剂），默认回退 RESP。
+GAFF2/GAFF + AM1-BCC（默认）、RESP、RESP2、ABCG2；ReaxFF（QEq 电荷模拟中算）。
+RESP/RESP2 的 QM 引擎默认 Gaussian 16（`qm.engine: gaussian`，需 WSL 已装
+G16 与 Multiwfn，见 `scripts/g16env.sh`）；未装时可回退 `qm.engine: quick`
+（QUICK 免费，但无 RESP2、无隐式溶剂）。
 
 **Q: 多分子怎么装盒？**
 `count > 1` 自动启用 packmol（需在 `packmol.box` 给出盒尺寸）。
@@ -254,11 +276,12 @@ main.py                  # 标准入口：python main.py input.yaml
 src/
 ├── config.py            # yaml 配置解析与校验
 ├── pipeline.py          # 流水线编排（GAFF2 主链 / ReaxFF 分支）+ 检查报告
-├── molecule_layer.py    # SMILES → 3D → antechamber → parmchk2；RESP(QUICK)
+├── molecule_layer.py    # SMILES → 3D → antechamber → parmchk2；RESP/RESP2（G16+Multiwfn 或 QUICK）
 ├── packmol_layer.py     # 多分子装盒
 ├── system_layer.py      # tleap 拓扑 ×N + 坐标 → prmtop
 ├── export_layer.py      # prmtop → data.lmp（atom_style full）
 ├── export_reaxff.py     # 坐标/元素 → data.lmp（atom_style charge）
+├── multiwfn.py          # Multiwfn RESP/RESP2 拟合 + ESP 可视化导出（Gaussian 引擎）
 ├── check_lammps_data.py # 不依赖 LAMMPS 的格式自检
 └── prmtop_to_lammps.py  # Amber → LAMMPS 参数转换
 ```

@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import glob
 import os
 import shutil
 
@@ -96,20 +97,38 @@ def run_pipeline(cfg: Config) -> dict:
     ok, msgs = validate_export(cfg, exp, natom_input=natom_input,
                                expected_topo=expected_topo)
 
-    # 3b. ESP 可视化导出：单分子 RESP 时生成 {name}_esp.cub（点电荷库仑近似）
+    # 3b. ESP 可视化导出：单分子 RESP/RESP2 时生成 ESP 产物
+    #   gaussian 引擎 → Multiwfn 严格 QM（vtx.pdb 闭合曲面 + mapfunc.cub）
+    #   quick 引擎 → 点电荷库仑近似 cube（旧路径保留）
     esp_cub = None
-    if not multi and cfg.charge_method == 'resp' and cfg.esp.enabled:
-        from esp_export import export_esp_cube
-        esp_cub = os.path.join(workdir, cfg.name + '_esp.cub')
-        export_esp_cube(exp['data_lmp'], esp_cub,
-                        cfg.esp.spacing, cfg.esp.buffer)
-        molden = mols[0].get('molden')
-        print(f'  ESP cube → {esp_cub}（点电荷近似, spacing={cfg.esp.spacing} Å, '
-              f'buffer={cfg.esp.buffer} Å）')
-        if molden:
-            print(f'  波函数 molden → {molden}（VMD/Multiwfn 可视化用）')
-    elif multi and cfg.charge_method == 'resp':
-        print('  [info] 多分子体系跳过 ESP cube 导出（当前仅单分子 RESP 支持）')
+    esp_vtx = None
+    if not multi and cfg.charge_method in ('resp', 'resp2') and cfg.esp.enabled:
+        if cfg.qm.engine == 'gaussian':
+            from multiwfn import esp_cube as mwfn_cube, esp_surface_pdb
+            wavefn = mols[0].get('wavefn')   # .fch（Gaussian 波函数）
+            if not wavefn or not os.path.exists(wavefn):
+                raise RuntimeError(f'ESP 导出需要波函数 .fch，未找到: {wavefn}')
+            esp_vtx = os.path.join(workdir, cfg.name + '_esp.vtx.pdb')
+            esp_surface_pdb(wavefn, esp_vtx, workdir=workdir,
+                            multiwfn_path=cfg.qm.multiwfn_path)
+            print(f'  ESP 曲面 → {esp_vtx}（Multiwfn 密度 0.001 等值面, '
+                  f'B 因子=ESP kcal/mol, VMD Beta 着色）')
+            esp_cub = os.path.join(workdir, cfg.name + '_esp.cub')
+            mwfn_cube(wavefn, esp_cub, workdir=workdir,
+                      multiwfn_path=cfg.qm.multiwfn_path)
+            print(f'  ESP cube → {esp_cub}（Multiwfn 严格 QM ESP, 非点电荷近似）')
+        else:
+            from esp_export import export_esp_cube
+            esp_cub = os.path.join(workdir, cfg.name + '_esp.cub')
+            export_esp_cube(exp['data_lmp'], esp_cub,
+                            cfg.esp.spacing, cfg.esp.buffer)
+            print(f'  ESP cube → {esp_cub}（点电荷近似, spacing={cfg.esp.spacing} Å, '
+                  f'buffer={cfg.esp.buffer} Å）')
+        wavefn = mols[0].get('wavefn')
+        if wavefn:
+            print(f'  波函数 → {wavefn}（VMD/Multiwfn 可视化用）')
+    elif multi and cfg.charge_method in ('resp', 'resp2'):
+        print('  [info] 多分子体系跳过 ESP cube 导出（当前仅单分子 RESP/RESP2 支持）')
 
     report = {
         'config': cfg,
@@ -119,6 +138,7 @@ def run_pipeline(cfg: Config) -> dict:
         'validation': {'ok': ok, 'messages': msgs},
         'data_lmp': exp['data_lmp'],
         'esp_cub': esp_cub,
+        'esp_vtx': esp_vtx,
         'workdir': workdir,
     }
     # 3c. 体系标准 xyz 导出（默认主产物；原子顺序与 data.lmp 一致，可喂 OVITO/VMD/其他工具）
@@ -134,6 +154,11 @@ def run_pipeline(cfg: Config) -> dict:
 
     if cfg.organize_output:
         keep = [exp['data_lmp']] + [m['mol2'] for m in mols if m.get('mol2')] + [xyz_path]
+        # 保留 QM 波函数与 ESP 可视化产物（fch/chg/cub/vtx.pdb）
+        keep += [p for p in glob.glob(os.path.join(workdir, '*.fch'))]
+        keep += [p for p in glob.glob(os.path.join(workdir, '*.chg'))]
+        keep += [p for p in glob.glob(os.path.join(workdir, '*.cub'))]
+        keep += [p for p in glob.glob(os.path.join(workdir, 'vtx.pdb'))]
         organize_workdir(workdir, keep, cfg.organize_backup)
     return report
 
@@ -235,6 +260,11 @@ def _run_pipeline_reaxff(cfg: Config, workdir: str, mols: list, multi: bool) -> 
 
     if cfg.organize_output:
         keep = [exp['data_lmp']] + [m['mol2'] for m in mols if m.get('mol2')] + [xyz_path]
+        # 保留 QM 波函数与 ESP 可视化产物（fch/chg/cub/vtx.pdb）
+        keep += [p for p in glob.glob(os.path.join(workdir, '*.fch'))]
+        keep += [p for p in glob.glob(os.path.join(workdir, '*.chg'))]
+        keep += [p for p in glob.glob(os.path.join(workdir, '*.cub'))]
+        keep += [p for p in glob.glob(os.path.join(workdir, 'vtx.pdb'))]
         organize_workdir(workdir, keep, cfg.organize_backup)
     return report
 
@@ -391,17 +421,31 @@ def _write_report(report: dict) -> None:
         f'- 结论: {"通过" if ok else "失败"}',
     ]
     lines += [f'- {m}' for m in report['validation']['messages']]
-    if not multi and cfg.charge_method == 'resp' and cfg.esp.enabled:
-        lines += [
-            '',
-            '## ESP 可视化导出（单分子 RESP）',
-            f'- ESP cube: {os.path.basename(report["esp_cub"])} '
-            f'（点电荷库仑近似, spacing={cfg.esp.spacing} Å, buffer={cfg.esp.buffer} Å）',
-            f'- 波函数: {os.path.basename(mols[0].get("molden") or "-")} '
-            f'（QUICK HF/6-31G* molden, VMD/Multiwfn 可视化用）',
-            '- 说明: cube 为点电荷近似 ESP（力场电荷），非严格 QM 电子云积分；',
-            '  作示意图/定性分析足够；严格值请用 Multiwfn 对 molden 的 cubesp 功能。',
-        ]
+    if not multi and cfg.charge_method in ('resp', 'resp2') and cfg.esp.enabled:
+        if cfg.qm.engine == 'gaussian':
+            lines += [
+                '',
+                '## ESP 可视化导出（单分子 RESP/RESP2, Gaussian+Multiwfn）',
+                f'- ESP 曲面: {os.path.basename(report["esp_vtx"])} '
+                f'（Multiwfn 密度 0.001 闭合等值面, B 因子=ESP kcal/mol, '
+                f'VMD Beta 着色）',
+                f'- ESP cube: {os.path.basename(report["esp_cub"])} '
+                f'（Multiwfn 严格 QM ESP, 非点电荷近似）',
+                f'- 波函数: {os.path.basename(mols[0].get("wavefn") or "-")} '
+                f'（Gaussian .fch, VMD/Multiwfn 可视化/二次分析用）',
+            ]
+        else:
+            lines += [
+                '',
+                '## ESP 可视化导出（单分子 RESP, QUICK 点电荷近似）',
+                f'- ESP cube: {os.path.basename(report["esp_cub"])} '
+                f'（点电荷库仑近似, spacing={cfg.esp.spacing} Å, '
+                f'buffer={cfg.esp.buffer} Å）',
+                f'- 波函数: {os.path.basename(mols[0].get("wavefn") or "-")} '
+                f'（QUICK HF/6-31G* molden, VMD/Multiwfn 可视化用）',
+                '- 说明: cube 为点电荷近似 ESP（力场电荷），非严格 QM 电子云积分；',
+                '  作示意图/定性分析足够；严格值请用 Multiwfn 对 molden 的 cubesp 功能。',
+            ]
     lines += [
         '',
         '## LAMMPS 实跑验证（可选，建议集群跑）',

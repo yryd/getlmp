@@ -10,8 +10,9 @@ from dataclasses import dataclass, field
 
 import yaml
 
-SUPPORTED_CHARGE = {'bcc', 'abcg2', 'resp', 'none'}   # resp2 不支持（见 docs/dev_notes.md）
+SUPPORTED_CHARGE = {'bcc', 'abcg2', 'resp', 'resp2', 'none'}
 SUPPORTED_FF = {'gaff2', 'gaff', 'reaxff'}
+SUPPORTED_QM_ENGINE = {'gaussian', 'quick'}
 # ReaxFF 原子类型默认元素顺序（须与 ffield.reax 的元素顺序一致；可经 yaml 覆盖）
 DEFAULT_REAX_ELEMENTS = ['C', 'H', 'O', 'N', 'S', 'P', 'F', 'Cl', 'Br', 'I']
 
@@ -42,6 +43,24 @@ class EspCfg:
 
 
 @dataclass
+class QmCfg:
+    """量子化学引擎配置（RESP/RESP2 电荷拟合的波函数来源）。
+
+    engine=gaussian（默认，新主路径）：G16 单点 + Multiwfn RESP 拟合；
+    engine=quick（旧路径保留）：QUICK HF/6-31G* + resp 两阶段拟合。
+    """
+    engine: str = 'gaussian'   # gaussian / quick
+    g16root: str = ''          # 空=自动探测（env/默认路径）
+    method: str = 'b3lyp'      # 531 推荐 B3LYP-D3(BJ)
+    basis: str = 'def2TZVP'    # G16 命名（def2-TZVP 连字符写法会自动转）
+    opt: bool = False          # 是否先几何优化（默认单点）
+    solvent: str = ''          # 空=气相；'water'/'ethanol'（RESP2 需要）
+    resp2: bool = False        # RESP2（需 solvent 非空）
+    delta: float = 0.5         # RESP2 δ
+    multiwfn_path: str = ''    # 空=自动探测
+
+
+@dataclass
 class Config:
     name: str = 'system'
     forcefield: str = 'gaff2'
@@ -50,6 +69,7 @@ class Config:
     molecules: list = field(default_factory=list)   # list[MoleculeCfg]
     packmol: PackmolCfg = field(default_factory=PackmolCfg)
     esp: EspCfg = field(default_factory=EspCfg)
+    qm: QmCfg = field(default_factory=QmCfg)
     output: str = 'data.lmp'
     workdir: str = 'work'
     seed: int = 2026
@@ -83,12 +103,39 @@ def load_config(path: str) -> Config:
         raise ValueError(f'不支持的 forcefield={ff!r}（支持: {sorted(SUPPORTED_FF)}）')
     cfg.forcefield = ff
 
+    # qm 段（RESP/RESP2 的量子化学引擎配置；bcc/abcg2 不依赖 qm）
+    qm = raw.get('qm') or {}
+    if not isinstance(qm, dict):
+        raise ValueError('qm 需要字典配置，如 {engine: gaussian, method: b3lyp, basis: def2-TZVP}')
+    qe = str(qm.get('engine', cfg.qm.engine))
+    if qe not in SUPPORTED_QM_ENGINE:
+        raise ValueError(f'不支持的 qm.engine={qe!r}（支持: {sorted(SUPPORTED_QM_ENGINE)}）')
+    cfg.qm.engine = qe
+    cfg.qm.g16root = str(qm.get('g16root', cfg.qm.g16root))
+    cfg.qm.method = str(qm.get('method', cfg.qm.method))
+    cfg.qm.basis = str(qm.get('basis', cfg.qm.basis))
+    cfg.qm.opt = bool(qm.get('opt', cfg.qm.opt))
+    cfg.qm.solvent = str(qm.get('solvent', cfg.qm.solvent))
+    cfg.qm.resp2 = bool(qm.get('resp2', cfg.qm.resp2))
+    cfg.qm.delta = float(qm.get('delta', cfg.qm.delta))
+    cfg.qm.multiwfn_path = str(qm.get('multiwfn_path', cfg.qm.multiwfn_path))
+    if not (0.0 <= cfg.qm.delta <= 1.0):
+        raise ValueError(f'qm.delta 需在 [0,1] 内，当前 {cfg.qm.delta!r}')
+
     cm = raw.get('charge_method', cfg.charge_method)
     if cm not in SUPPORTED_CHARGE:
         raise ValueError(
-            f'不支持的 charge_method={cm!r}（支持: {sorted(SUPPORTED_CHARGE)}；'
-            f'resp2 不支持：antechamber 无该电荷方法（见 docs/dev_notes.md）')
+            f'不支持的 charge_method={cm!r}（支持: {sorted(SUPPORTED_CHARGE)}）')
     cfg.charge_method = cm
+    if cm in ('resp', 'resp2'):
+        if qe == 'quick' and cm == 'resp2':
+            raise ValueError('charge_method=resp2 需要 qm.engine=gaussian'
+                             '（QUICK 无 resp2 方法）')
+        if cm == 'resp2' and not cfg.qm.resp2:
+            raise ValueError('charge_method=resp2 需要 qm.resp2: true')
+        if cm == 'resp2' and not cfg.qm.solvent:
+            raise ValueError('charge_method=resp2 需要 qm.solvent 非空'
+                             '（RESP2 = 气相 + 溶剂 PCM 单点混合）')
     if ff == 'reaxff' and cm not in ('none',):
         raise ValueError(
             f'forcefield=reaxff 时 charge_method 应为 none（QEq 在模拟中计算），'
