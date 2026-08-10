@@ -1,0 +1,13 @@
+# 单分子示例：甲烷 → 一个分子的 data.lmp（5 原子）
+# 运行：cd examples && python ../main.py methane.yaml
+name: methane
+forcefield: gaff2        # gaff2 / gaff / reaxff
+charge_method: bcc       # bcc (AM1-BCC) / abcg2 / resp（reaxff 时为 none）
+net_charge: 0
+molecules:
+  - smiles: C
+    name: methane
+    count: 1
+output: data.lmp
+workdir: work
+seed: 2026

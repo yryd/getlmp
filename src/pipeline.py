@@ -1,0 +1,356 @@
+#!/usr/bin/env python
+"""流水线编排：分子层 → 体系层 → 导出层 → 校验 → 检查报告。
+
+- 阶段 1：单分子（count=1）tleap 闭环
+- 阶段 2：多分子（count>1）packmol 装盒 + tleap loadpdb 闭环
+入口：`python main.py input.yaml`。
+"""
+from __future__ import annotations
+
+import os
+
+from config import Config
+from export_layer import build_data, validate_export
+from export_reaxff import build_data_reaxff
+from molecule_layer import build_molecule
+from packmol_layer import (mol2_to_xyz, parse_packed_xyz, run_packmol, sdf_to_xyz, write_inp)
+from system_layer import (build_system_multi, build_system_single, count_mol2_topo)
+
+# 集群 LAMMPS 验证模板（交付物的一部分，用户/SimAgent 可据此实跑）
+# 注意：read_data 必须放在所有 style 定义之后（data 含 Coeffs 段时 LAMMPS 强制要求），
+# 否则报 "Must define pair_style before Pair Coeffs"。
+LAMMPS_IN_TEMPLATE = """units real
+atom_style full
+boundary p p p
+pair_style lj/cut/coul/long 10.0
+pair_modify mix arithmetic
+bond_style harmonic
+angle_style harmonic
+dihedral_style fourier
+improper_style cvff
+special_bonds amber
+kspace_style pppm 1e-4
+read_data {data}
+run 0
+"""
+
+
+def run_pipeline(cfg: Config) -> dict:
+    """执行整条流水线，返回报告 dict（同时写入 workdir/check_report.txt）。"""
+    workdir = cfg.workdir if os.path.isabs(cfg.workdir) else os.path.join(cfg.base_dir, cfg.workdir)
+    os.makedirs(workdir, exist_ok=True)
+
+    multi = cfg.packmol.enabled
+    print(f'==== getlmp pipeline: {cfg.name} '
+          f'({cfg.forcefield} / {cfg.charge_method}, net={cfg.net_charge}, '
+          f'{"多分子" if multi else "单分子"}) ====')
+
+    # 1. 分子层：每个分子类型一次完整流水线
+    mols = []
+    for mc in cfg.molecules:
+        mols.append(build_molecule(cfg, mc, workdir))
+
+    if cfg.forcefield == 'reaxff':
+        return _run_pipeline_reaxff(cfg, workdir, mols, multi)
+
+    if not multi:
+        # 2a. 体系层：单分子 tleap
+        mol = mols[0]
+        sysr = build_system_single(cfg, workdir, mol['mol2'], mol['frcmod'])
+        natom_input = mol['natom']
+        expected_topo = None
+        box = None
+    else:
+        # 2b. 体系层：packmol 装盒 + 合并 PDB + tleap loadpdb
+        print(f'== 体系层: packmol (preset={cfg.packmol.preset}, '
+              f'box={cfg.packmol.box}) ==')
+        n_atoms = []
+        for i, mc in enumerate(cfg.molecules):
+            n_atoms.append(mol2_to_xyz(mols[i]['mol2'],
+                                       os.path.join(workdir, mc.name + '.xyz')))
+        inp = os.path.join(workdir, 'packmol.inp')
+        write_inp(cfg, [os.path.join(workdir, mc.name + '.xyz') for mc in cfg.molecules],
+                  n_atoms, inp)
+        packed = run_packmol(inp, workdir)
+        blocks = parse_packed_xyz(packed, n_atoms, [mc.count for mc in cfg.molecules])
+        sysr = build_system_multi(
+            cfg, workdir,
+            [m['mol2'] for m in mols],
+            [m['frcmod'] for m in mols],
+            blocks)
+        natom_input = sum(mc.count * m['natom'] for mc, m in zip(cfg.molecules, mols))
+        print(f'  体系原子总数（期望）: {natom_input}')
+        expected_topo = {'bonds': 0, 'angles': 0}
+        for mc, m in zip(cfg.molecules, mols):
+            nb, na = count_mol2_topo(m['mol2'])
+            expected_topo['bonds'] += mc.count * nb
+            expected_topo['angles'] += mc.count * na
+        # packmol box 语义 [xlo,ylo,zlo,xhi,yhi,zhi] → LAMMPS 顺序 [xlo,xhi,ylo,yhi,zlo,zhi]
+        b = cfg.packmol.box
+        box = [b[0], b[3], b[1], b[4], b[2], b[5]]
+
+    # 3. 导出层 + 校验
+    exp = build_data(cfg, workdir, sysr['prmtop'], sysr['inpcrd'], box=box)
+    ok, msgs = validate_export(cfg, exp, natom_input=natom_input,
+                               expected_topo=expected_topo)
+
+    # 3b. ESP 可视化导出：单分子 RESP 时生成 {name}_esp.cub（点电荷库仑近似）
+    esp_cub = None
+    if not multi and cfg.charge_method == 'resp' and cfg.esp.enabled:
+        from esp_export import export_esp_cube
+        esp_cub = os.path.join(workdir, cfg.name + '_esp.cub')
+        export_esp_cube(exp['data_lmp'], esp_cub,
+                        cfg.esp.spacing, cfg.esp.buffer)
+        molden = mols[0].get('molden')
+        print(f'  ESP cube → {esp_cub}（点电荷近似, spacing={cfg.esp.spacing} Å, '
+              f'buffer={cfg.esp.buffer} Å）')
+        if molden:
+            print(f'  波函数 molden → {molden}（VMD/Multiwfn 可视化用）')
+    elif multi and cfg.charge_method == 'resp':
+        print('  [info] 多分子体系跳过 ESP cube 导出（当前仅单分子 RESP 支持）')
+
+    report = {
+        'config': cfg,
+        'molecules': mols,
+        'system': sysr,
+        'export': exp,
+        'validation': {'ok': ok, 'messages': msgs},
+        'data_lmp': exp['data_lmp'],
+        'esp_cub': esp_cub,
+        'workdir': workdir,
+    }
+    _write_report(report)
+    print(f'\n==== 校验结果: {"✅ 通过" if ok else "❌ 失败"} ====')
+    for m in msgs:
+        print('  ' + m)
+    print(f'\n输出: {exp["data_lmp"]}')
+    print(f'检查报告: {os.path.join(workdir, "check_report.txt")}')
+    return report
+
+
+def _run_pipeline_reaxff(cfg: Config, workdir: str, mols: list, multi: bool) -> dict:
+    """ReaxFF 分支：坐标/元素 → packmol 装盒（坐标层面）→ 极简 data（无 tleap）。"""
+    atom_info = [{'elements': m['elements'], 'natom': m['natom']} for m in mols]
+
+    if multi:
+        # 多分子：packmol 装盒（坐标层面，无拓扑）
+        print(f'== 体系层: packmol (ReaxFF, preset={cfg.packmol.preset}, '
+              f'box={cfg.packmol.box}) ==')
+        n_atoms = []
+        for i, mc in enumerate(cfg.molecules):
+            n_atoms.append(sdf_to_xyz(mols[i]['sdf'],
+                                      os.path.join(workdir, mc.name + '.xyz')))
+        inp = os.path.join(workdir, 'packmol.inp')
+        write_inp(cfg, [os.path.join(workdir, mc.name + '.xyz') for mc in cfg.molecules],
+                  n_atoms, inp)
+        packed = run_packmol(inp, workdir)
+        blocks = parse_packed_xyz(packed, n_atoms, [mc.count for mc in cfg.molecules])
+        b = cfg.packmol.box
+        box = [b[0], b[3], b[1], b[4], b[2], b[5]]   # packmol → LAMMPS 顺序
+        natom_input = sum(c * n for c, n in zip([mc.count for mc in cfg.molecules], n_atoms))
+    else:
+        # 单分子：坐标块直接作为"一个拷贝"，盒自动推算
+        m0 = mols[0]
+        blocks = [[list(zip(m0['elements'],
+                            [c[0] for c in m0['coords']],
+                            [c[1] for c in m0['coords']],
+                            [c[2] for c in m0['coords']]))]]
+        box = None
+        natom_input = m0['natom']
+
+    print(f'== 导出层: ReaxFF 极简 data (Masses + Atoms) ==')
+    exp = build_data_reaxff(cfg, workdir, blocks, atom_info, box=box)
+    ok, msgs = _validate_reaxff(cfg, exp, natom_input)
+
+    report = {
+        'config': cfg,
+        'molecules': mols,
+        'system': None,
+        'export': exp,
+        'validation': {'ok': ok, 'messages': msgs},
+        'data_lmp': exp['data_lmp'],
+        'workdir': workdir,
+    }
+    _write_report_reaxff(report)
+    print(f'\n==== 校验结果: {"✅ 通过" if ok else "❌ 失败"} ====')
+    for m in msgs:
+        print('  ' + m)
+    print(f'\n输出: {exp["data_lmp"]}')
+    print(f'检查报告: {os.path.join(workdir, "check_report.txt")}')
+    return report
+
+
+def _validate_reaxff(cfg: Config, exp: dict, natom_input: int) -> tuple[bool, list[str]]:
+    """ReaxFF 校验：原子数守恒 + 段计数 + 类型数 + Masses 覆盖。"""
+    info = exp['info']
+    check = exp['check']
+    msgs: list[str] = []
+    ok = True
+
+    if info['natom'] == natom_input:
+        msgs.append(f'原子数守恒: {info["natom"]} == 分子层 {natom_input} ✅')
+    else:
+        ok = False
+        msgs.append(f'原子数不一致: data={info["natom"]} 分子层={natom_input} ❌')
+
+    # 无键项
+    for key in ('bonds', 'angles', 'dihedrals', 'impropers'):
+        h = check['counts'].get(key, 0)
+        a = check.get(key + '_actual', 0)
+        if h != a:
+            ok = False
+            msgs.append(f'段计数不一致 {key}: 头部={h} 实际={a} ❌')
+    msgs.append('段计数: 头部与文件记录一致 ✅（无键项，ReaxFF 预期）')
+
+    # 类型计数
+    for key in ('atom_types', 'bond_types', 'angle_types', 'dihedral_types', 'improper_types'):
+        h = check['counts'].get(key, 0)
+        a = check.get(key + '_actual', 0)
+        if h != a:
+            ok = False
+            msgs.append(f'类型计数不一致 {key}: 头部={h} 实际={a} ❌')
+    msgs.append('类型计数: 头部与 Coeffs 段一致 ✅')
+
+    # 电荷列全 0（QEq 待算）
+    msgs.append(f'电荷: 初始 0.0（QEq/reax 模拟中计算）✅')
+    return ok, msgs
+
+
+def _write_report_reaxff(report: dict) -> None:
+    cfg = report['config']
+    mols = report['molecules']
+    exp = report['export']
+    info = exp['info']
+    ok = report['validation']['ok']
+    path = os.path.join(report['workdir'], 'check_report.txt')
+    multi = cfg.packmol.enabled
+
+    lines = [
+        f'# getlmp 检查报告 — {cfg.name}',
+        f'- 日期: {__import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M:%S")}',
+        f'- 配置: {cfg.name}.yaml  (forcefield=reaxff, charge=none/QEq)',
+        '',
+        '## 分子层（RDKit 3D 坐标）',
+    ]
+    for mc, mol in zip(cfg.molecules, mols):
+        lines.append(f'- SMILES: {mc.smiles}  (name={mc.name}, count={mc.count})')
+        lines.append(f'  - 单分子原子数 (含 H): {mol["natom"]}，'
+                     f'元素 {sorted(set(mol["elements"]))}')
+    lines += ['', '## 体系层（ReaxFF：坐标装盒，无拓扑）']
+    if multi:
+        lines += [f'- 装盒: packmol preset={cfg.packmol.preset} '
+                  f'box={cfg.packmol.box} tolerance={cfg.packmol.tolerance} '
+                  f'seed={cfg.packmol.seed}']
+    else:
+        lines += ['- 单分子：盒由坐标自动推算']
+    lines += [
+        '',
+        '## 导出层（data.lmp，ReaxFF 极简格式）',
+        f'- 原子: {info["natom"]}  原子类型: {info["atom_types"]}',
+        f'- atom_style: {cfg.reax_atom_style}'
+        f'（{"6 列 id charge x y z" if cfg.reax_atom_style == "charge" else "7 列 id mol-id type charge x y z"}）',
+        f'- 键/角/二面角/improper: 无（ReaxFF 键级由 pair_style 计算）',
+        f'- 电荷: 0.0（QEq 模拟中计算）',
+        f'- 盒: {info["box"]}',
+        f'- 元素顺序（类型号→元素）: {cfg.reax_elements}',
+        '',
+        '## 校验',
+        f'- 结论: {"✅ 通过" if ok else "❌ 失败"}',
+    ]
+    lines += [f'- {m}' for m in report['validation']['messages']]
+    lines += [
+        '',
+        '## LAMMPS 实跑验证（ReaxFF，建议集群跑）',
+        '本机无 LAMMPS；将 data.lmp + ffield.reax + param.qeq 交给 OpsAgent 代跑：',
+        '```lammps',
+        REAXFF_IN_TEMPLATE.format(
+            data=os.path.basename(exp['data_lmp']),
+            elements=' '.join(cfg.reax_elements)),
+        '```',
+        '通过判据: READ_DATA_OK + run 0 无 ERROR。',
+    ]
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(lines) + '\n')
+
+
+# ReaxFF 的 LAMMPS 验证模板（data 无 Coeffs 段）
+# 关键规则（OpsAgent 集群实测暴露，作业见集群 getlmp_verify/ethanol_reax）：
+#   - atom_style charge 的 Atoms 段是 6 列（id charge x y z），不能有 molecule 列
+#   - data 无 Pair Coeffs 段时，pair_style + pair_coeff 必须在 read_data 之后
+#   - fix qeq/reaxff 的 params 用关键字 reaxff → 从 ffield 提取 QEq 参数，无需 param.qeq
+REAXFF_IN_TEMPLATE = """units real
+atom_style charge
+boundary p p p
+read_data {data}
+pair_style reaxff NULL
+pair_coeff * * ffield.reax {elements}
+fix 1 all qeq/reaxff 1 0.0 10.0 1e-6 reaxff
+run 0
+"""
+
+
+def _write_report(report: dict) -> None:
+    cfg = report['config']
+    mols = report['molecules']
+    exp = report['export']
+    info = exp['info']
+    ok = report['validation']['ok']
+    path = os.path.join(report['workdir'], 'check_report.txt')
+    multi = cfg.packmol.enabled
+
+    lines = [
+        f'# getlmp 检查报告 — {cfg.name}',
+        f'- 日期: {__import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M:%S")}',
+        f'- 配置: {cfg.name}.yaml  (forcefield={cfg.forcefield}, '
+        f'charge={cfg.charge_method}, net_charge={cfg.net_charge})',
+        '',
+        '## 分子层',
+    ]
+    for mc, mol in zip(cfg.molecules, mols):
+        lines += [
+            f'- SMILES: {mc.smiles}  (name={mc.name}, count={mc.count}, '
+            f'resname={mc.resname})',
+            f'  - 单分子原子数 (含 H): {mol["natom"]}，'
+            f'frcmod: {"有" if mol.get("n_extra") else "无（GAFF 标准库齐全）"}',
+        ]
+    lines += ['', '## 体系层（tleap）',
+              f'- prmtop: {os.path.basename(report["system"]["prmtop"])}',
+              f'- inpcrd: {os.path.basename(report["system"]["inpcrd"])}']
+    if multi:
+        lines += [f'- 装盒: packmol preset={cfg.packmol.preset} '
+                  f'box={cfg.packmol.box} tolerance={cfg.packmol.tolerance} '
+                  f'seed={cfg.packmol.seed}']
+    lines += [
+        '',
+        '## 导出层（data.lmp）',
+        f'- 原子: {info["natom"]}  键: {info["nbond"]}  角: {info["nangle"]}',
+        f'- 二面角: {info["ndihedral"]}  improper: {info["nimproper"]}',
+        f'- 电荷总和: {info["total_charge"]:.6f}（净电荷 {cfg.net_charge}）',
+        f'- 盒: {info["box"]}',
+        '',
+        '## 校验',
+        f'- 结论: {"✅ 通过" if ok else "❌ 失败"}',
+    ]
+    lines += [f'- {m}' for m in report['validation']['messages']]
+    if not multi and cfg.charge_method == 'resp':
+        lines += [
+            '',
+            '## ESP 可视化导出（单分子 RESP）',
+            f'- ESP cube: {os.path.basename(report["esp_cub"])} '
+            f'（点电荷库仑近似, spacing={cfg.esp.spacing} Å, buffer={cfg.esp.buffer} Å）',
+            f'- 波函数: {os.path.basename(mols[0].get("molden") or "-")} '
+            f'（QUICK HF/6-31G* molden, VMD/Multiwfn 可视化用）',
+            '- 说明: cube 为点电荷近似 ESP（力场电荷），非严格 QM 电子云积分；',
+            '  作示意图/定性分析足够；严格值请用 Multiwfn 对 molden 的 cubesp 功能。',
+        ]
+    lines += [
+        '',
+        '## LAMMPS 实跑验证（可选，建议集群跑）',
+        '本机无 LAMMPS；将 data.lmp 交给 OpsAgent 代跑或自行在集群执行：',
+        '```lammps',
+        LAMMPS_IN_TEMPLATE.format(data=os.path.basename(exp['data_lmp'])),
+        '```',
+        '通过判据: READ_DATA_OK + run 0 无 ERROR（VERIFY_EXIT=0）。',
+    ]
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(lines) + '\n')

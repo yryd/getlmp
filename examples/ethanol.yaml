@@ -1,0 +1,13 @@
+# 单分子示例：乙醇 → 一个分子的 data.lmp（9 原子）
+# 运行：cd examples && python ../main.py ethanol.yaml
+name: ethanol
+forcefield: gaff2
+charge_method: bcc
+net_charge: 0
+molecules:
+  - smiles: CCO
+    name: ethanol
+    count: 1
+output: data.lmp
+workdir: work
+seed: 2026

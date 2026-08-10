@@ -1,0 +1,20 @@
+# 体系示例：甲烷 10 + 乙醇 5 混合装盒 → 体系的 data.lmp（10*5 + 5*9 = 95 原子）
+# 运行：cd examples && python ../main.py methane_ethanol.yaml
+name: methane_ethanol_mix
+forcefield: gaff2
+charge_method: bcc
+net_charge: 0
+molecules:
+  - smiles: C
+    name: methane
+    count: 10
+    resname: MTH
+  - smiles: CCO
+    name: ethanol
+    count: 5
+    resname: ETH
+packmol:
+  box: [0, 0, 0, 30, 30, 30]    # [xlo, ylo, zlo, xhi, yhi, zhi] Å，多分子必需
+output: data.lmp
+workdir: work
+seed: 2026
