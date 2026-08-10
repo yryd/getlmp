@@ -1,0 +1,11 @@
+name: PIP
+forcefield: gaff2        # gaff2 / gaff / reaxff
+charge_method: resp       # bcc (AM1-BCC) / abcg2 / resp（reaxff 时为 none）
+net_charge: 0
+molecules:
+  - smiles: N1CCNCC1
+    name: PIP
+    count: 1
+output: PIP.lmp
+workdir: work
+seed: 2026

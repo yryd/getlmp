@@ -53,6 +53,7 @@ class Config:
     output: str = 'data.lmp'
     workdir: str = 'work'
     seed: int = 2026
+    organize_output: bool = True   # 跑完只留 lmp+mol2，其余进 workdir/_others/
     buffer: float = 3.8        # 单分子盒 padding（Å，仅 count=1 时使用）
     reax_elements: list = field(default_factory=lambda: list(DEFAULT_REAX_ELEMENTS))
     reax_atom_style: str = 'charge'   # charge(6 列,无 mol-id) / full(7 列,带 mol-id)
@@ -113,6 +114,7 @@ def load_config(path: str) -> Config:
     cfg.output = str(raw.get('output', cfg.output))
     cfg.workdir = str(raw.get('workdir', cfg.workdir))
     cfg.seed = int(raw.get('seed', cfg.seed))
+    cfg.organize_output = bool(raw.get('organize_output', cfg.organize_output))
     cfg.buffer = float(raw.get('buffer', cfg.buffer))
 
     mols = raw.get('molecules')

@@ -63,6 +63,9 @@ molecules:
   - smiles: CCO          # 乙醇
     name: ethanol
     count: 1
+output: data.lmp         # 输出 data 文件名（相对 workdir；默认 data.lmp）
+workdir: work            # 工作目录
+organize_output: true    # 跑完整理：workdir 根目录只留 output 的 lmp + 各分子 mol2，其余进 _others/
 ```
 
 运行（项目根目录执行）：
@@ -101,8 +104,10 @@ OVITO/VMD 可视化或传给其他工具。
 
 产物：
 
-- `data.lmp` — LAMMPS 可直接 `read_data` 的 data 文件
-- `work/check_report.txt` — 检查报告（分子/体系/导出各层信息 + 校验结论 + 集群验证模板）
+- `data.lmp` — LAMMPS 可直接 `read_data` 的 data 文件（文件名 = yaml `output:`，默认 `data.lmp`）
+- `work/` — 工作目录；`organize_output: true`（默认）时根目录只保留
+  `output` 的 lmp + 各分子 `{name}.mol2`，其余中间文件（检查报告、prmtop、
+  sdf、frcmod、esp.cub、molden、ANTECHAMBER_* 等）自动移入 `work/_others/`
 
 ---
 
@@ -188,6 +193,9 @@ packmol:
 各阶段验收记录见 `docs/` 检查报告。
 
 ### 流程会产出哪些文件（workdir 内）
+
+> `organize_output: true`（默认）跑完自动整理：根目录只留 `output` 的 lmp + 各 `{name}.mol2`，
+> 下面表格里的其余文件全部移入 `work/_others/`。
 
 | 类别 | 文件 | 说明 |
 |------|------|------|

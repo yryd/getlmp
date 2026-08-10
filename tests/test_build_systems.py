@@ -88,9 +88,10 @@ def run_getlmp(yaml_text: str, expected_atoms: int) -> None:
         assert proc.returncode == 0, f"getlmp 退出码 {proc.returncode}:\n{out}"
 
         data_path = os.path.join(tmp, "work", "data.lmp")
-        report_path = os.path.join(tmp, "work", "check_report.txt")
+        # organize_output 默认开启：data.lmp/mol2 留根目录，其余（含检查报告）进 _others/
+        report_path = os.path.join(tmp, "work", "_others", "check_report.txt")
         assert os.path.exists(data_path), f"data.lmp 未生成:\n{out}"
-        assert os.path.exists(report_path), f"check_report.txt 未生成:\n{out}"
+        assert os.path.exists(report_path), f"check_report.txt 未生成（应在 _others/）:\n{out}"
 
         atoms = _parse_atoms(data_path)
         assert atoms == expected_atoms, (

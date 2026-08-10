@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 
 from config import Config
 from export_layer import build_data, validate_export
@@ -125,7 +126,43 @@ def run_pipeline(cfg: Config) -> dict:
         print('  ' + m)
     print(f'\n输出: {exp["data_lmp"]}')
     print(f'检查报告: {os.path.join(workdir, "check_report.txt")}')
+
+    if cfg.organize_output:
+        keep = [exp['data_lmp']] + [m['mol2'] for m in mols if m.get('mol2')]
+        organize_workdir(workdir, keep)
     return report
+
+
+def organize_workdir(workdir: str, keep: list[str]) -> None:
+    """跑完整理：workdir 根目录只保留 keep 列表（如 data.lmp、*.mol2），
+    其余文件/子目录全部移入 workdir/_others/（重名自动加时间戳后缀）。
+
+    keep 用绝对路径比较；_others 目录本身不动。
+    """
+    others = os.path.join(workdir, '_others')
+    os.makedirs(others, exist_ok=True)
+    keep_abs = {os.path.abspath(p) for p in keep}
+    moved: list[str] = []
+    for entry in sorted(os.listdir(workdir)):
+        p = os.path.join(workdir, entry)
+        if os.path.abspath(p) in keep_abs or entry == '_others':
+            continue
+        dst = os.path.join(others, entry)
+        if os.path.exists(dst):
+            import time
+            stamp = time.strftime('%H%M%S')
+            base, ext = os.path.splitext(entry)
+            dst = os.path.join(others, f'{base}_{stamp}{ext}')
+        if os.path.isdir(p) and not os.path.islink(p):
+            shutil.move(p, dst)
+        else:
+            os.replace(p, dst)
+        moved.append(entry)
+    if moved:
+        print(f'  [organize] 保留 {len(keep)} 个主产物；'
+              f'{len(moved)} 项已移入 _others/')
+        if len(moved) <= 12:
+            print(f'    → ' + ', '.join(moved))
 
 
 def _run_pipeline_reaxff(cfg: Config, workdir: str, mols: list, multi: bool) -> dict:
@@ -177,6 +214,10 @@ def _run_pipeline_reaxff(cfg: Config, workdir: str, mols: list, multi: bool) -> 
         print('  ' + m)
     print(f'\n输出: {exp["data_lmp"]}')
     print(f'检查报告: {os.path.join(workdir, "check_report.txt")}')
+
+    if cfg.organize_output:
+        keep = [exp['data_lmp']] + [m['mol2'] for m in mols if m.get('mol2')]
+        organize_workdir(workdir, keep)
     return report
 
 
