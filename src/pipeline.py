@@ -135,7 +135,8 @@ def run_pipeline(cfg: Config) -> dict:
 
 def organize_workdir(workdir: str, keep: list[str]) -> None:
     """跑完整理：workdir 根目录只保留 keep 列表（如 data.lmp、*.mol2），
-    其余文件/子目录全部移入 workdir/_others/（重名自动加时间戳后缀）。
+    其余文件/子目录全部移入 workdir/_others/（重名自动加时间戳后缀）；
+    纯临时目录（_resp_tmp_*，RESP 拟合中间）不保留，直接删除。
 
     keep 用绝对路径比较；_others 目录本身不动。
     """
@@ -143,9 +144,15 @@ def organize_workdir(workdir: str, keep: list[str]) -> None:
     os.makedirs(others, exist_ok=True)
     keep_abs = {os.path.abspath(p) for p in keep}
     moved: list[str] = []
+    deleted: list[str] = []
     for entry in sorted(os.listdir(workdir)):
         p = os.path.join(workdir, entry)
         if os.path.abspath(p) in keep_abs or entry == '_others':
+            continue
+        # 纯临时目录（RESP 拟合中间产物）不保留，直接删
+        if entry.startswith('_resp_tmp_') and os.path.isdir(p) and not os.path.islink(p):
+            shutil.rmtree(p)
+            deleted.append(entry)
             continue
         dst = os.path.join(others, entry)
         if os.path.exists(dst):
@@ -158,11 +165,12 @@ def organize_workdir(workdir: str, keep: list[str]) -> None:
         else:
             os.replace(p, dst)
         moved.append(entry)
-    if moved:
+    if moved or deleted:
         print(f'  [organize] 保留 {len(keep)} 个主产物；'
-              f'{len(moved)} 项已移入 _others/')
-        if len(moved) <= 12:
-            print(f'    → ' + ', '.join(moved))
+              f'{len(moved)} 项已移入 _others/'
+              + (f'；删除临时目录 {len(deleted)} 个' if deleted else ''))
+        if len(moved) + len(deleted) <= 12:
+            print('    → ' + ', '.join(moved + [f'{d}(删)' for d in deleted]))
 
 
 def _run_pipeline_reaxff(cfg: Config, workdir: str, mols: list, multi: bool) -> dict:
