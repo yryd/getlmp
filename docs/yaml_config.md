@@ -1,0 +1,213 @@
+# getlmp YAML 配置参考
+
+> 唯一入口：`python main.py input.yaml`。本文列出**全部可用配置项**：类型、默认值、
+> 可选值、作用与组合约束。来源：`src/config.py`（`load_config` 校验逻辑）。
+> 更新日期：2026-08-11。
+
+---
+
+## 0. 速查：最小示例与完整示例
+
+**最小示例**（单分子，AM1-BCC）：
+
+```yaml
+name: ethanol
+forcefield: gaff2
+charge_method: bcc
+molecules:
+  - smiles: CCO
+    name: ethanol
+```
+
+**完整示例**（RESP2，展示全部常用段）：
+
+```yaml
+name: resp2_ethanol
+forcefield: gaff2
+charge_method: resp2
+net_charge: 0
+qm:
+  engine: gaussian
+  method: b3lyp
+  basis: def2TZVP
+  solvent: water
+  resp2: true
+  delta: 0.5
+esp:
+  enabled: true
+  spacing: 0.3
+  buffer: 1.5
+molecules:
+  - smiles: CCO
+    name: ethanol
+    count: 1
+output: data.lmp
+workdir: work
+seed: 2026
+organize_output: true
+```
+
+---
+
+## 1. 顶层选项
+
+| 键 | 类型 | 默认 | 说明 |
+|----|------|------|------|
+| `name` | str | `system` | 体系名。用于主产物命名（`{name}_esp.cub`、`{name}_esp.vtx.pdb`、检查报告标题等） |
+| `forcefield` | str | `gaff2` | 力场：`gaff2` / `gaff` / `reaxff` |
+| `charge_method` | str | `bcc` | 电荷方法：`bcc`(AM1-BCC) / `abcg2` / `resp` / `resp2` / `none`（`reaxff` 时必须为 `none`） |
+| `net_charge` | int | `0` | 分子净电荷（传给 antechamber `-nc` 与 g16 输入；多分子体系按每个分子拷贝计） |
+| `molecules` | list | **必填** | 分子列表，见 §2 |
+| `output` | str | `data.lmp` | 输出的 LAMMPS data 文件名（相对 `workdir`） |
+| `workdir` | str | `work` | 工作目录（相对配置文件所在目录） |
+| `seed` | int | `2026` | 随机种子：RDKit ETKDG 3D 构象 + packmol 装盒共用 |
+| `organize_output` | bool | `true` | 跑完自动整理：根目录只留主产物（data.lmp、mol2、system.xyz、ESP 正式产物、fch/chg），其余全部移入 `workdir/_others/` |
+| `organize_backup` | bool | `false` | 与 `_others/` 已有文件同名时：`false`=覆盖只留最新；`true`=追加 HHMMSS 时间戳保留历史多份 |
+| `buffer` | float | `3.8` | 单分子盒 padding（Å）。仅 `count=1` 时使用（`[坐标极值 ± buffer]` 推算盒）；多分子由 `packmol.box` 决定 |
+| `reax_elements` | list[str] | `[C, H, O, N, S, P, F, Cl, Br, I]` | ReaxFF 专用：data 类型号→元素顺序，**必须与你的 `ffield.reax` 元素顺序一致**；可覆盖 |
+| `reax_atom_style` | str | `charge` | ReaxFF 专用：`charge`=Atoms 段 6 列（无 mol-id，需分子分组时配 `full`）；`full`=7 列带 mol-id |
+| `qm` | dict | `{}` | 量子化学引擎段（RESP/RESP2），见 §3 |
+| `esp` | dict | `{}` | ESP 可视化导出段，见 §4 |
+| `packmol` | dict | `{}` | 多分子装盒段，见 §5 |
+
+### 校验规则（顶层）
+- `forcefield` / `charge_method` 取值非法直接报错；
+- `forcefield: reaxff` 时 `charge_method` 必须 `none`（QEq 在模拟中计算）；
+- 缺少 `molecules` 段报错。
+
+---
+
+## 2. molecules 段（分子列表，必填）
+
+每个条目一个字典：
+
+```yaml
+molecules:
+  - smiles: CCO        # SMILES（RDKit 解析）
+    name: ethanol      # 分子名（默认 mol1/mol2...）
+    count: 1           # 拷贝数（>1 自动启用 packmol 装盒）
+    resname: ETH       # 残基名（antechamber -rn；默认取 name 前 3 字符大写）
+  - smiles: C1CCNCC1
+    name: PIP
+    count: 5
+```
+
+| 键 | 类型 | 默认 | 说明 |
+|----|------|------|------|
+| `smiles` | str | **必填** | SMILES 字符串，RDKit 解析并生成 3D 构象 |
+| `name` | str | `mol{序号}` | 分子名（也用于中间文件命名：`{name}.sdf/.mol2/.fch` 等） |
+| `count` | int | `1` | 分子拷贝数。**任一条目 count>1 即视为多分子体系**（自动 packmol，需配 `packmol.box`） |
+| `resname` | str | `name[:3].upper()` | 残基名，antechamber `-rn` 用；默认取 name 前 3 字符大写 |
+
+---
+
+## 3. qm 段（量子化学引擎，RESP/RESP2 用）
+
+> 仅 `charge_method: resp` / `resp2` 时生效；`bcc` / `abcg2` 不依赖 qm（bcc 用 sqm 半经验，
+> abcg2 用内置查表）。**不写 qm 段 = 全部默认**（engine=gaussian）。
+
+```yaml
+qm:
+  engine: gaussian     # gaussian（默认，G16+Multiwfn）/ quick（QUICK 旧路径回退）
+  g16root: ''          # G16 根目录（空=自动探测；通常不用配）
+  method: b3lyp        # QM 方法（531 推荐 B3LYP-D3(BJ)）
+  basis: def2TZVP      # 基组（G16 命名；文献写法 def2-TZVP 会自动转）
+  opt: false           # true=先几何优化再算 ESP；默认 false=单点（坐标用 RDKit 构象）
+  solvent: ''          # 空=气相；'water'/'ethanol'（PCM 隐式溶剂；RESP2 必需）
+  resp2: false         # RESP2 开关（需 solvent 非空）
+  delta: 0.5           # RESP2 δ 混合系数 [0,1]
+  multiwfn_path: ''    # Multiwfn_noGUI 路径（空=自动探测）
+```
+
+| 键 | 类型 | 默认 | 说明 |
+|----|------|------|------|
+| `engine` | str | `gaussian` | `gaussian`：G16 单点（`pop=MK IOp(6/33=2,6/42=6)`）+ Multiwfn 拟合，531 路线主路径；`quick`：QUICK HF/6-31G* + resp 两阶段，旧路径回退（免费、不依赖 G16，但**无 RESP2、无隐式溶剂**） |
+| `g16root` | str | `''` | G16 安装根目录。空=自动探测（环境变量/默认路径 `/home/yryd/packages/soft/g16/g16`）。非交互 shell 下代码会自动 source `scripts/g16env.sh`，通常无需手动配 |
+| `method` | str | `b3lyp` | 泛函/方法名，G16 route 直接使用。531 路线推荐 `b3lyp`（代码自动补 `em=GD3BJ` 色散校正） |
+| `basis` | str | `def2TZVP` | 基组。注意 **G16 不认带连字符的 `def2-TZVP`**，代码会自动把 `def2-` 转 `def2`（兼容文献写法）。阴离子体系可配 `ma-def2TZVP` 等 |
+| `opt` | bool | `false` | `true` 时在 g16 route 加 `opt`，**先几何优化再算 ESP**；默认 `false`=单点（几何=RDKit ETKDG 构象→mol2，不经 QM 优化）。RESP 惯例为单点，一般保持默认 |
+| `solvent` | str | `''` | 隐式溶剂名（G16 SMD 关键词，如 `water`/`ethanol`）。非空时 route 加 `scrf=(smd,solvent=xxx)`。**RESP2 必需**（溶剂单点） |
+| `resp2` | bool | `false` | RESP2 开关（与 `charge_method: resp2` 配套，见 §6 校验） |
+| `delta` | float | `0.5` | RESP2 混合系数：`q = (1-δ)·q_gas + δ·q_solv`。取值范围 [0,1]，越接近 1 越偏向溶剂化 |
+| `multiwfn_path` | str | `''` | Multiwfn_noGUI 可执行文件路径。空=自动探测（PATH → `~/packages/soft/multiwfn/` 及 `/home/yryd/packages/soft/multiwfn/` 下 glob） |
+
+---
+
+## 4. esp 段（ESP 可视化导出）
+
+> 仅**单分子**（全部 count=1）且 `charge_method: resp/resp2` 时生效；多分子自动跳过（打印提示）。
+
+```yaml
+esp:
+  enabled: true    # 不需要可视化时 false（不影响 RESP 电荷拟合本身）
+  spacing: 0.3     # 网格间距 Å（0.2 更细更慢、0.5 更快）
+  buffer: 1.5      # 分子外扩 Å（网格覆盖范围）
+```
+
+| 键 | 类型 | 默认 | 说明 |
+|----|------|------|------|
+| `enabled` | bool | `true` | 是否导出 ESP 可视化产物。`false` 只关可视化，**不影响电荷拟合** |
+| `spacing` | float | `0.3` | ESP cube 网格间距（Å）。`0.2` 更精细（cube 更大更慢），`0.5` 更快 |
+| `buffer` | float | `1.5` | 网格在分子外扩的范围（Å），决定 cube 覆盖体积 |
+
+**产物（engine=gaussian 时）**：`{name}_esp.vtx.pdb`（闭合曲面顶点，B 因子=ESP kcal/mol，VMD Beta 着色）、`{name}_esp.cub`（严格 QM ESP，a.u.）、`{name}.fch`（波函数）。
+**engine=quick 时**：仅 `{name}_esp.cub`（点电荷库仑近似，a.u.）。
+
+---
+
+## 5. packmol 段（多分子装盒）
+
+> `count>1` 自动启用（`enabled` 无需手写）；启用时**必须**给 `box`。
+
+```yaml
+packmol:
+  enabled: true     # 多分子自动开；单分子想强制装盒可手写 true
+  preset: bulk      # 当前仅支持 bulk（slab/interface 后续阶段）
+  box: [0, 0, 0, 60, 60, 60]   # [xlo, ylo, zlo, xhi, yhi, zhi] Å
+  seed: 2026        # 装盒随机种子（默认取顶层 seed）
+  tolerance: 2.0    # 装盒容差（Å，分子间最小间距）
+```
+
+| 键 | 类型 | 默认 | 说明 |
+|----|------|------|------|
+| `enabled` | bool | `false`（任一条目 count>1 时自动 true） | 是否 packmol 装盒。单分子体系也可显式 `true` 强制装盒 |
+| `preset` | str | `bulk` | 装盒模式。**当前仅 `bulk`**；`slab`/`interface` 在规划中（填了会报错） |
+| `box` | list[6] | 无 | 盒尺寸 `[xlo, ylo, zlo, xhi, yhi, zhi]`（Å）。**多分子必填**，单分子可不填（用 `buffer` 推算） |
+| `seed` | int | 顶层 `seed` | 装盒随机种子 |
+| `tolerance` | float | `2.0` | packmol tolerance（Å） |
+
+---
+
+## 6. 组合约束（load_config 校验）
+
+| 组合 | 约束 |
+|------|------|
+| `charge_method: resp2` | 必须同时 `qm.engine: gaussian`（QUICK 无 resp2）、`qm.resp2: true`、`qm.solvent` 非空 |
+| `forcefield: reaxff` | `charge_method` 必须 `none`；ReaxFF 路径忽略 qm/esp 段 |
+| `packmol.enabled`（多分子） | 必须 `packmol.box`；`preset` 只能 `bulk` |
+| `qm.delta` | 必须在 [0,1] |
+| `esp.spacing` / `esp.buffer` | 必须为正数 |
+| `reax_elements` | 字符串列表；重复元素自动去重 |
+| `reax_atom_style` | 仅 `charge` / `full` |
+| `packmol.box` | 必须 6 个数 |
+
+## 7. 力场 × 电荷可用性矩阵
+
+| forcefield | charge_method | 引擎 | 状态 |
+|---|---|---|---|
+| gaff2 / gaff | `bcc` | sqm（AM1-BCC，半经验） | ✅ 默认 |
+| gaff2 / gaff | `abcg2` | antechamber 内置查表 | ✅ |
+| gaff2 / gaff | `resp` | G16+Multiwfn（默认）或 QUICK 回退 | ✅ |
+| gaff2 / gaff | `resp2` | G16 气相+溶剂双单点 + Multiwfn | ✅ |
+| reaxff | `none` | 无（QEq 模拟中算） | ✅ |
+
+---
+
+## 8. 常见注意
+
+1. **相对路径**以配置文件所在目录为基准（`workdir`、`output`）。
+2. **`qm.opt: true` 会显著变慢**（几何优化通常需多轮 SCF）；RESP 常规用单点即可。
+3. **`organize_output: false`** 可关闭自动整理，全部中间文件留在 `workdir/` 便于排查。
+4. **`organize_backup: true`** 会在 `_others/` 同名文件追加时间戳保留多份（默认覆盖只留最新）。
+5. 多分子体系（任一条目 count>1）**不会导出 ESP 可视化**（当前仅单分子支持）。
+6. G16 未安装/未配置环境时，RESP 请用 `qm.engine: quick`；RESP2 必须 gaussian。

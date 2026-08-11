@@ -241,6 +241,7 @@ packmol:
 | 文档 | 内容 |
 |------|------|
 | [`examples/`](examples/) | 可直接运行的示例配置（甲烷/乙醇单体 + 混合体系 + RESP/RESP2 + QUICK 回退） |
+| [`docs/yaml_config.md`](docs/yaml_config.md) | **YAML 配置参考**：全部选项、类型、默认值、校验规则、组合约束 |
 | [`docs/dev_notes.md`](docs/dev_notes.md) | 开发文档：规划与需求矩阵、环境搭建、技术坑、验收结论、后续方向 |
 
 ---

@@ -202,7 +202,7 @@ def load_config(path: str) -> Config:
         raise ValueError(f'阶段 2 仅支持 packmol preset=bulk，当前 {cfg.packmol.preset!r}；'
                          f'slab/interface 见规划文档（后续阶段）')
 
-    # ESP 可视化导出（默认开启；仅单分子 RESP 生效）
+    # ESP 可视化导出（默认开启；仅单分子 RESP/RESP2 生效）
     esp = raw.get('esp') or {}
     if not isinstance(esp, dict):
         raise ValueError('esp 需要字典配置，如 {enabled: true, spacing: 0.3, buffer: 1.5}')
