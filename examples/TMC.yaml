@@ -1,0 +1,19 @@
+name: TMC
+forcefield: gaff2
+charge_method: resp2
+net_charge: 0
+qm:
+  engine: gaussian
+  method: b3lyp
+  basis: def2TZVP            # G16 命名（文献写法 def2-TZVP 也会自动兼容）
+  solvent: water             # RESP2 必需：溶剂（PCM 单点）
+  resp2: true                # 必需：开启 RESP2
+  delta: 0.5                 # δ 混合系数（默认 0.5）
+  opt: true
+molecules:
+  - smiles: ClC(=O)c1cc(cc(c1)C(Cl)=O)C(Cl)=O
+    name: TMC
+    count: 1
+output: tmc.lmp
+workdir: work
+seed: 2026
