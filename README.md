@@ -216,7 +216,8 @@ packmol:
 
 ### 流程会产出哪些文件（workdir 内）
 
-> `organize_output: true`（默认）跑完自动整理：根目录只留 `output` 的 lmp + 各 `{name}.mol2` + `system.xyz`，
+> `organize_output: true`（默认）跑完自动整理：根目录只留 `data.lmp` + 各 `{name}.mol2` +
+> `system.xyz` + `check_report.txt` + 波函数（`*.fch`/`*.molden`/`*.chg`），
 > 下面表格里的其余文件全部移入 `work/_others/`。
 
 | 类别 | 文件 | 说明 |
@@ -234,7 +235,7 @@ packmol:
 | | `_resp_tmp_{name}/` | resp 两阶段拟合中间目录 |
 | | `_others/electrostatic_potential/iso/` | iso 法：density.cub + esp.cub（Multiwfn 严格 QM） |
 | | `_others/electrostatic_potential/pt/` | pt 法：mol.pdb + vtx.pdb（B 因子=ESP） |
-| | `{name}.fch` / `{name}.molden` | 波函数（可视化/二次分析） |
+| | `{name}.fch` / `{name}.molden` | 波函数（可视化/二次分析；保留根目录，organize 不清除） |
 | 噪音残留 | `ANTECHAMBER_*.AC`、`ATOMTYPE.INF` | antechamber 临时文件，可忽略/删除 |
 
 ---
@@ -246,6 +247,8 @@ packmol:
 | [`examples/`](examples/) | 可直接运行的示例配置（甲烷/乙醇单体 + 混合体系 + RESP/RESP2 + QUICK 回退） |
 | [`docs/yaml_config.md`](docs/yaml_config.md) | **YAML 配置参考**：全部选项、类型、默认值、校验规则、组合约束 |
 | [`docs/dev_notes.md`](docs/dev_notes.md) | 开发文档：规划与需求矩阵、环境搭建、技术坑、验收结论、后续方向 |
+| [`docs/install.md`](docs/install.md) | **环境安装与配置**：PATH 约定、G16/Multiwfn/QUICK 安装、.bashrc 模板、check_env 自检 |
+| `docs/plan_*_integration.md` / `plan_*_validation.md` | 历史计划与分阶段验收记录（已完成，仅存档） |
 
 ---
 
@@ -301,7 +304,7 @@ python tests/test_build_systems.py    # 甲烷/乙醇单体 + 混合体系，3/3
 
 改动后回归：运行上述测试，或在临时目录准备 `input.yaml` 执行 `python main.py input.yaml` 验证输出与校验报告。
 
-每个阶段交付：代码 + 检查报告（运行报告在 `workdir/_others/`，开发经验归档 `docs/dev_notes.md`）。
+每个阶段交付：代码 + 检查报告（运行报告在 `workdir/check_report.txt`，开发经验归档 `docs/dev_notes.md`）。
 
 ---
 

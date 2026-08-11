@@ -95,13 +95,14 @@ export QUICK_BASIS=$CONDA_PREFIX/AmberTools/src/quick/basis
 - 苯 RESP(G16)：12 原子，6C≈-0.109±0.002、6H≈+0.109±0.001（近似等价，见上），
   sum=0，校验通过。
 
-**ESP 可视化（单分子 RESP/RESP2，统一 Multiwfn）**：产物在
-`_others/electrostatic_potential/` 下，gaussian 引擎用 `.fch`、quick 引擎用 `.molden`：
-- `iso/density.cub` + `iso/esp.cub`：iso 法——Multiwfn 严格 QM 电子密度与 ESP 网格
-  （两次运行同一表面格点空间，网格完全一致，VMD density 等值面 0.001 + esp 着色）。
-- `pt/mol.pdb` + `pt/vtx.pdb`：pt 法——分子结构与密度 0.001 闭合等值面顶点，
-  B 因子字段=ESP(kcal/mol)，VMD Beta 着色直接看图。
-- `{name}.fch`（或 `{name}.molden`）：波函数归档（二次分析）。
+**ESP 可视化（单分子 RESP/RESP2，统一 Multiwfn）**：
+- `_others/electrostatic_potential/iso/density.cub` + `iso/esp.cub`：iso 法——Multiwfn
+  严格 QM 电子密度与 ESP 网格（两次运行同一表面格点空间，网格完全一致，
+  VMD density 等值面 0.001 + esp 着色）。
+- `_others/electrostatic_potential/pt/mol.pdb` + `pt/vtx.pdb`：pt 法——分子结构与密度
+  0.001 闭合等值面顶点，B 因子字段=ESP(kcal/mol)，VMD Beta 着色直接看图。
+- `{name}.fch`（gaussian）或 `{name}.molden`（quick）：波函数归档，**保留在 workdir
+  根目录**（organize 不清除，VMD/Multiwfn 二次分析用）。
 - 旧点电荷近似粗 cube（esp_export.py）已废弃删除；esp.spacing/buffer 保留但不再生效。
 
 ### 4.2 QUICK 回退路径（`qm.engine: quick`，2026-08-10 验收）
@@ -160,5 +161,5 @@ AmberTools 26 已内置 `BCCPARM_ABCG2.DAT` / `ATOMTYPE_ABCG2.DEF`（conda 环�
 
 ## 8. 交付约定
 
-每个阶段交付：代码 + 检查报告。运行检查报告随每次运行生成于 `workdir/_others/check_report.txt`
+每个阶段交付：代码 + 检查报告。运行检查报告随每次运行生成于 `workdir/check_report.txt`
 ；开发经验与验收结论归档至本文档。

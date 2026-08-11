@@ -166,6 +166,7 @@ def run_pipeline(cfg: Config) -> dict:
         # 保留 QM 波函数**正式产物**（fch/chg；ESP iso/pt 产物在
         # _others/electrostatic_potential/ 内，organize 不动 _others 目录）
         keep += [p for p in glob.glob(os.path.join(workdir, '*.fch'))]
+        keep += [p for p in glob.glob(os.path.join(workdir, '*.molden'))]
         keep += [p for p in glob.glob(os.path.join(workdir, '*.chg'))]
         organize_workdir(workdir, keep, cfg.organize_backup)
     return report
@@ -271,6 +272,7 @@ def _run_pipeline_reaxff(cfg: Config, workdir: str, mols: list, multi: bool) -> 
         # 保留 QM 波函数**正式产物**（fch/chg；ESP iso/pt 产物在
         # _others/electrostatic_potential/ 内，organize 不动 _others 目录）
         keep += [p for p in glob.glob(os.path.join(workdir, '*.fch'))]
+        keep += [p for p in glob.glob(os.path.join(workdir, '*.molden'))]
         keep += [p for p in glob.glob(os.path.join(workdir, '*.chg'))]
         organize_workdir(workdir, keep, cfg.organize_backup)
     return report

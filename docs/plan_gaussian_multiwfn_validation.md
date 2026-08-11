@@ -63,8 +63,8 @@ g16 h2o_test.gjf h2o_test.log    # 需先按 docs/install.md 把 G16 加入 PATH
 
 - 二进制：`/home/yryd/packages/soft/multiwfn/Multiwfn_2026.7.15_bin_Linux_noGUI/Multiwfn_noGUI`
 - 免编译（noGUI 版）；`-ispecial 1` 支持 ESP 拟合脚本交互
-- 路径探测：`multiwfn.py` 自动探测（glob `~/packages/soft/multiwfn/*/Multiwfn_noGUI`），
-  可用 `qm.multiwfn_path` 覆盖
+- 路径探测：当时为 glob 候选目录；**2026-08-11（1ad7855）起改为 PATH 探测**
+  （`shutil.which`），安装方法见 `docs/install.md`；`qm.multiwfn_path` 仍可显式覆盖
 
 ## 阶段 3：代码集成 — ✅ 通过（2026-08-11，提交 b7cf6d4）
 
