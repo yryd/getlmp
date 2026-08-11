@@ -8,11 +8,10 @@ molecules:
   - smiles: N1CCNCC1
     name: PIP
     count: 1
-# esp 段可调 ESP 可视化导出（默认开启；不需要时 enabled: false，仅单分子 RESP 生效）：
+# esp 段可调 ESP 可视化导出（默认开启；不需要时 enabled: false，仅单分子 RESP/RESP2 生效）：
 # esp:
 #   enabled: true
-#   spacing: 0.3          # 网格间距 Å（0.2 更细、0.5 更快）
-#   buffer: 1.5           # 分子外扩 Å（网格覆盖范围）
+#   # spacing/buffer 已废弃（旧点电荷近似 cube 参数，Multiwfn 网格自动）
 output: PIP.lmp
 workdir: work
 seed: 2026

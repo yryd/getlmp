@@ -73,7 +73,7 @@ source scripts/g16env.sh && g16 h2o_test.gjf h2o_test.log
 | `src/multiwfn.py`（新） | RESP（7→18→1 两阶段）、RESP2（7→18→3→1，δ=0.5）、ESP 曲面（vtx.pdb）、严格 QM ESP cube |
 | `src/molecule_layer.py` | `_build_resp_charges` 双引擎分派（gaussian 默认 / quick 回退）；RESP2 双单点（gas + solvent PCM） |
 | `src/config.py` | 新增 `qm:` 段（engine/method/basis/solvent/resp2/delta/multiwfn_path）+ `esp:` 段 |
-| `src/pipeline.py` | 波函数归档 + ESP 导出编排（gaussian 引擎 → Multiwfn；quick → 点电荷近似） |
+| `src/pipeline.py` | 波函数归档 + ESP 导出编排（iso/pt 两套产物，统一 Multiwfn：gaussian → .fch、quick → .molden） |
 | `scripts/g16env.sh` | G16 环境变量封装（非交互 shell） |
 | examples | `gaussian_resp.yaml` / `resp2.yaml`；PIP.yaml 显式 `qm.engine: quick` |
 

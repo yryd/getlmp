@@ -1,6 +1,9 @@
 # 计划：集成 Gaussian 16 + Multiwfn 到 getlmp
 
 > 状态：✅ 已完成（2026-08-11，提交 b7cf6d4）
+> ⚠️ 2026-08-11 补充（提交 6140f2a）：ESP 可视化产物重构为 iso/pt 两套
+> （`_others/electrostatic_potential/{iso,pt}/`，统一 Multiwfn 导出；quick 亦用 .molden；
+> 旧点电荷近似 esp_cub.py 已删除）。6.4–6.6 节 API/产物描述以代码和 dev_notes 4.1 为准。
 > 分阶段执行记录见 `plan_gaussian_multiwfn_validation.md`；结论与坑归档于 `dev_notes.md` 4.1 节
 > 依据：http://sobereva.com/531（RESP2 思想与 Multiwfn 计算）、http://sobereva.com/441（RESP 原理）
 > 执行者：换上下文后的 MDToolAgent，按本计划逐步实现
@@ -107,17 +110,21 @@ class QmCfg:
 - `find_multiwfn()`：探测 config / PATH / 默认路径，友好报错
 - `resp_from_fch(fch, out_chg) -> list[float]`
 - `resp2_from_fch(fch_gas, fch_solv, delta) -> list[float]`
-- `esp_surface_pdb(fch, vtx_pdb)`：密度 0.001 等值面 + 表面 ESP → vtx.pdb
-  （B 因子存 ESP，VMD Beta 着色，闭合曲面）
-- `esp_cube(fch, cube)`：严格 QM ESP cube（替代点电荷近似，Multiwfn 主功能计算）
+- `esp_pt(wfn, mol_pdb, vtx_pdb)`：一次运行导出 mol.pdb（分子结构）+ vtx.pdb
+  （密度 0.001 等值面顶点，B 因子存 ESP，VMD Beta 着色，闭合曲面）
+- `esp_cube(wfn, cub)`：严格 QM ESP cube（替代点电荷近似）
+- `density_cube(wfn, cub)`：电子密度 cube（与 esp_cube 同一网格，iso 法叠加渲染）
+  （注：6140f2a 起以上函数为 iso/pt 两套产物的实现，wfn 支持 .fch / .molden）
 - 统一：管道喂 Multiwfn 输入（`7\n18\n...\n0\n`），解析输出，超时保护
 
 ### 6.5 ESP 可视化改造（esp 模块）
-- 单分子 RESP + `qm=gaussian` 时：Multiwfn 生成 vtx.pdb + cube（严格 ESP）
-- 旧 esp_cub.py 点电荷近似保留为 fallback 或删除（实现时确认：若 Multiwfn 路径全覆盖则删）
+- 单分子 RESP/RESP2 时：Multiwfn 生成 iso/pt 两套产物（6140f2a 重构）：
+  `iso/{density.cub, esp.cub}` + `pt/{mol.pdb, vtx.pdb}`，位于 `_others/electrostatic_potential/`
+- 旧 esp_cub.py 点电荷近似已确认删除（6140f2a，Multiwfn 路径全覆盖，quick 亦读 .molden）
 
 ### 6.6 organize_output / main.py
-- 新产物归类：`data.lmp`、mol2、`*.fch`、`*.chg`、`vtx.pdb`、`*.cub` 保留；
+- 新产物归类：`data.lmp`、mol2、`*.fch`、`*.chg` 保留根目录；ESP iso/pt 产物在
+  `_others/electrostatic_potential/`（organize 不动 _others 内部，6140f2a 起）；
   gjf/out/scratch 进 `_others/` 或清理
 - main.py 无结构性改动
 
