@@ -24,6 +24,10 @@ python main.py input.yaml    # → data.lmp + work/check_report.txt
 - **多电荷方案**：AM1-BCC（默认）、RESP / RESP2（Gaussian 16 + Multiwfn 拟合，
   531 路线）、ABCG2；RESP 亦可回退 QUICK（开源）引擎
 - **单分子与多分子体系**：单分子自动建盒；多分子用 packmol 装盒，支持任意分子组成
+- **自定义 packmol 装盒**：`packmol.inp_file` 直接喂自写 inp——可固定分子位置
+  （`fixed`）、改拷贝数、同一类型拆多块（如"1 个固定 + N 个自由"）
+- **分子层复用**：`reuse_molecule: true` 按配置指纹跳过已算好的 mol2/frcmod/波函数
+  （改 SMILES/电荷方法/力场/QM 后自动重算），调 packmol 参数不重跑分子层
 - **完整拓扑**：键/角/二面角/improper 参数由 antechamber + parmchk2 补齐，导出 atom_style full
 - **内置校验**：电荷守恒、原子数守恒、段计数、几何自检，跑完即出报告
 - **ESP 可视化导出**：单分子 RESP/RESP2 自动产出 iso/pt 两套产物
@@ -138,6 +142,18 @@ packmol:
 ```
 
 输出 4200 原子、完整键合拓扑（水 O-H 键齐全），集群 LAMMPS 实跑通过。
+
+**装盒想更精细**（固定某分子位置、改拷贝数、同一类型拆多块）？先不带
+`inp_file` 跑一次，`workdir/packmol.inp` 会保留在根目录当模板；复制改名后
+自由修改（如把 1 个分子 `fixed 15.0 15.0 15.0 0.0 0.0 0.0 1.0` 钉在盒中心），
+再在 yaml 里加 `inp_file: work/my.inp` 重跑即可：
+
+```yaml
+packmol:
+  box: [0, 0, 0, 60, 60, 60]
+  inp_file: work/my.inp      # 自定义 inp：structure 文件名为 {name}.xyz，number 以 inp 为准
+reuse_molecule: true         # 分子层复用：调 inp/box/count 不重跑 antechamber/QM
+```
 
 ### 场景 2：RESP / RESP2 电荷（Gaussian 16 + Multiwfn，531 路线）
 

@@ -63,6 +63,7 @@ organize_output: true
 | `seed` | int | `2026` | 随机种子：RDKit ETKDG 3D 构象 + packmol 装盒共用 |
 | `organize_output` | bool | `true` | 跑完自动整理：根目录只留主产物（data.lmp、mol2、system.xyz、ESP 正式产物、fch/chg），其余全部移入 `workdir/_others/` |
 | `organize_backup` | bool | `false` | 与 `_others/` 已有文件同名时：`false`=覆盖只留最新；`true`=追加 HHMMSS 时间戳保留历史多份 |
+| `reuse_molecule` | bool | `false` | 分子层复用：`workdir` 已有**同配置指纹**的 mol2/frcmod/波函数时跳过重算（antechamber/QM 不重跑）。改 SMILES/力场/电荷方法/净电荷/seed/QM 设置后指纹不匹配会自动重算。默认关 |
 | `buffer` | float | `3.8` | 单分子盒 padding（Å）。仅 `count=1` 时使用（`[坐标极值 ± buffer]` 推算盒）；多分子由 `packmol.box` 决定 |
 | `reax_elements` | list[str] | `[C, H, O, N, S, P, F, Cl, Br, I]` | ReaxFF 专用：data 类型号→元素顺序，**必须与你的 `ffield.reax` 元素顺序一致**；可覆盖 |
 | `reax_atom_style` | str | `charge` | ReaxFF 专用：`charge`=Atoms 段 6 列（无 mol-id，需分子分组时配 `full`）；`full`=7 列带 mol-id |
@@ -166,6 +167,7 @@ packmol:
   box: [0, 0, 0, 60, 60, 60]   # [xlo, ylo, zlo, xhi, yhi, zhi] Å
   seed: 2026        # 装盒随机种子（默认取顶层 seed）
   tolerance: 2.0    # 装盒容差（Å，分子间最小间距）
+  inp_file: work/my.inp   # 自定义 packmol inp（可选；非空时跳过自动生成，直接用该文件）
 ```
 
 | 键 | 类型 | 默认 | 说明 |
@@ -175,6 +177,7 @@ packmol:
 | `box` | list[6] | 无 | 盒尺寸 `[xlo, ylo, zlo, xhi, yhi, zhi]`（Å）。**多分子必填**，单分子可不填（用 `buffer` 推算） |
 | `seed` | int | 顶层 `seed` | 装盒随机种子 |
 | `tolerance` | float | `2.0` | packmol tolerance（Å） |
+| `inp_file` | str | `''` | 自定义 packmol inp 路径（相对配置文件所在目录或绝对路径）。非空时**跳过自动生成** write_inp，直接用该文件跑 packmol，适合加约束（如 `fixed` 固定分子位置）、改 number、同一类型拆多个 structure 块。**规则**：structure 文件名为 `{name}.xyz`（与 molecules 的 name 对应）；number 以 inp 内为准（可不同于 yaml count）；盒边界以 yaml `box` 为准（inp 里改 inside box 不会同步到 data.lmp） |
 
 ---
 
@@ -185,6 +188,7 @@ packmol:
 | `charge_method: resp2` | 必须同时 `qm.engine: gaussian`（QUICK 无 resp2）、`qm.resp2: true`、`qm.solvent` 非空 |
 | `forcefield: reaxff` | `charge_method` 必须 `none`；ReaxFF 路径忽略 qm/esp 段 |
 | `packmol.enabled`（多分子） | 必须 `packmol.box`；`preset` 只能 `bulk` |
+| `packmol.inp_file` | 仅多分子可用（单分子报错）；文件必须存在；structure 文件名须为 `{name}.xyz`（对应 molecules 的 name） |
 | `qm.delta` | 必须在 [0,1] |
 | `esp.spacing` / `esp.buffer` | 必须为正数 |
 | `reax_elements` | 字符串列表；重复元素自动去重 |
@@ -211,3 +215,5 @@ packmol:
 4. **`organize_backup: true`** 会在 `_others/` 同名文件追加时间戳保留多份（默认覆盖只留最新）。
 5. 多分子体系（任一条目 count>1）**不会导出 ESP 可视化**（当前仅单分子支持）。
 6. G16 未安装/未配置环境时，RESP 请用 `qm.engine: quick`；RESP2 必须 gaussian。
+7. **自定义 packmol inp 流程**：先不带 `inp_file` 跑一次（`workdir/packmol.inp` 会保留在根目录作模板）→ 复制改名（如 `work/my.inp`）自由修改（加 `fixed` 固定某分子、改 number、同类型拆多块）→ yaml 加 `inp_file: work/my.inp` 再跑。改 inp 后 `packmol.inp`/`my.inp` 都不会被 organize 移走。
+8. **`reuse_molecule: true` 复用范围**：仅分子层（mol2/frcmod/波函数）按指纹跳过；**体系层 packmol/tleap 每次都重跑**（改 inp、box、count 不影响分子层复用）。指纹文件 `{name}.fingerprint.json` 与 frcmod 会保留在 workdir 根目录（organize 不移动）。

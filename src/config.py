@@ -32,6 +32,9 @@ class PackmolCfg:
     box: list = None         # [xlo,ylo,zlo,xhi,yhi,zhi]
     seed: int = 2026
     tolerance: float = 2.0   # Å
+    inp_file: str = ''       # 自定义 packmol inp（绝对路径，load_config 已解析）。
+                             # 非空时跳过自动生成 write_inp，直接用该文件跑 packmol；
+                             # structure 顺序须与 molecules 一致（可改 number 与约束行）。
 
 
 @dataclass
@@ -82,6 +85,8 @@ class Config:
     seed: int = 2026
     organize_output: bool = True   # 跑完只留 lmp+mol2，其余进 workdir/_others/
     organize_backup: bool = False  # _others/ 已存在同名时：false=覆盖只留最新，true=追加 HHMMSS 时间戳保留多份
+    reuse_molecule: bool = False   # 分子层复用：workdir 已有同配置指纹的 mol2/frcmod/波函数时跳过
+                                   # 重算（默认关）。改 SMILES/电荷方法/力场/qm 后指纹不匹配会自动重算。
     buffer: float = 3.8        # 单分子盒 padding（Å，仅 count=1 时使用）
     reax_elements: list = field(default_factory=lambda: list(DEFAULT_REAX_ELEMENTS))
     reax_atom_style: str = 'charge'   # charge(6 列,无 mol-id) / full(7 列,带 mol-id)
@@ -171,6 +176,7 @@ def load_config(path: str) -> Config:
     cfg.seed = int(raw.get('seed', cfg.seed))
     cfg.organize_output = bool(raw.get('organize_output', cfg.organize_output))
     cfg.organize_backup = bool(raw.get('organize_backup', cfg.organize_backup))
+    cfg.reuse_molecule = bool(raw.get('reuse_molecule', cfg.reuse_molecule))
     cfg.buffer = float(raw.get('buffer', cfg.buffer))
 
     mols = raw.get('molecules')
@@ -208,6 +214,14 @@ def load_config(path: str) -> Config:
     if cfg.packmol.enabled and cfg.packmol.preset != 'bulk':
         raise ValueError(f'阶段 2 仅支持 packmol preset=bulk，当前 {cfg.packmol.preset!r}；'
                          f'slab/interface 见规划文档（后续阶段）')
+    inp_file = str(pm.get('inp_file', '')).strip()
+    if inp_file:
+        if not cfg.packmol.enabled:
+            raise ValueError('packmol.inp_file 仅多分子体系（count>1 或 packmol.enabled）可用')
+        p = inp_file if os.path.isabs(inp_file) else os.path.join(cfg.base_dir, inp_file)
+        if not os.path.exists(p):
+            raise ValueError(f'packmol.inp_file 不存在: {p}')
+        cfg.packmol.inp_file = os.path.abspath(p)
 
     # ESP 可视化导出（默认开启；仅单分子 RESP/RESP2 生效）
     esp = raw.get('esp') or {}

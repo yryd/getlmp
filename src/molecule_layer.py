@@ -10,6 +10,7 @@ RESP/RESP2 的 QM 引擎由 cfg.qm 决定：
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -29,6 +30,7 @@ def _run(cmd: list[str], cwd: str, desc: str) -> None:
 
 def _smiles_to_sdf(smiles: str, out_sdf: str, seed: int) -> int:
     """RDKit SMILES → 3D SDF（ETKDG + UFF）。返回含氢原子数。"""
+
     from rdkit import Chem
     from rdkit.Chem import AllChem, rdDistGeom
 
@@ -64,14 +66,112 @@ def _sdf_elements_coords(sdf: str) -> tuple[list[str], list[list[float]]]:
     return elements, coords
 
 
+def _molecule_fingerprint(cfg: Config, mc: MoleculeCfg) -> dict:
+    """分子层产物指纹：决定能否复用已有 mol2/frcmod/波函数。
+
+    只包含影响分子层输出的配置（SMILES/力场/电荷方法/净电荷/seed/QM 设置）；
+    count/output/workdir 等体系层配置不参与（复用不关心）。
+    """
+    return {
+        'smiles': mc.smiles,
+        'name': mc.name,
+        'resname': (mc.resname or mc.name[:3]).upper()[:3],
+        'forcefield': cfg.forcefield,
+        'charge_method': cfg.charge_method,
+        'net_charge': cfg.net_charge,
+        'seed': cfg.seed,
+        'qm': {
+            'engine': cfg.qm.engine,
+            'method': cfg.qm.method,
+            'basis': cfg.qm.basis,
+            'opt': cfg.qm.opt,
+            'solvent': cfg.qm.solvent,
+            'resp2': cfg.qm.resp2,
+            'delta': cfg.qm.delta,
+        },
+    }
+
+
+def _write_fingerprint(cfg: Config, mc: MoleculeCfg, base: str,
+                       natom: int, n_extra: int) -> str:
+    """写完分子层产物后落指纹文件 {name}.fingerprint.json（复用判断依据）。"""
+    fp = _molecule_fingerprint(cfg, mc)
+    fp['natom'] = natom
+    fp['n_extra'] = n_extra
+    path = base + '.fingerprint.json'
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(fp, f, ensure_ascii=False, indent=2)
+    return path
+
+
+def _try_reuse_molecule(cfg: Config, mc: MoleculeCfg, base: str) -> dict | None:
+    """尝试复用已有分子层产物（cfg.reuse_molecule=True 时调用）。
+
+    复用条件：指纹文件存在且与当前配置一致 + mol2/frcmod 存在；
+    RESP/RESP2 且 esp.enabled 时还需波函数存在（缺则重算，保证 ESP 可用）。
+    任一不满足 → 返回 None（调用方走完整重算）。
+    """
+    fp_path = base + '.fingerprint.json'
+    if not os.path.exists(fp_path):
+        return None
+    try:
+        with open(fp_path, encoding='utf-8') as f:
+            old = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(old, dict):
+        return None
+
+    cur = _molecule_fingerprint(cfg, mc)
+    if any(old.get(k) != cur[k] for k in cur if k != 'qm'):
+        print(f'  [reuse] {mc.name}: 配置指纹变化（分子层设置），重新计算')
+        return None
+    if any(old.get('qm', {}).get(k) != cur['qm'][k] for k in cur['qm']):
+        print(f'  [reuse] {mc.name}: 配置指纹变化（QM 设置），重新计算')
+        return None
+
+    mol2 = base + '.mol2'
+    frcmod = base + '.frcmod'
+    if not (os.path.exists(mol2) and os.path.exists(frcmod)):
+        print(f'  [reuse] {mc.name}: mol2/frcmod 缺失，重新计算')
+        return None
+
+    wavefn = None
+    if cfg.charge_method in ('resp', 'resp2'):
+        wavefn = base + ('.fch' if cfg.qm.engine == 'gaussian' else '.molden')
+        if cfg.esp.enabled and not os.path.exists(wavefn):
+            print(f'  [reuse] {mc.name}: 波函数 {os.path.basename(wavefn)} 缺失'
+                  f'（首次运行可能 esp.enabled=false），重新计算')
+            return None
+        if not os.path.exists(wavefn):
+            wavefn = None   # esp 关闭，不强制波函数
+
+    natom = old.get('natom')
+    n_extra = old.get('n_extra', 0)
+    if not natom:
+        return None
+    print(f'  [reuse] {mc.name}: 复用已有产物'
+          f'（mol2/frcmod{", 波函数" if wavefn else ""}，{natom} atoms）')
+    return {'sdf': base + '.sdf', 'mol2': mol2, 'frcmod': frcmod,
+            'wavefn': wavefn, 'natom': natom, 'n_extra': n_extra,
+            'reused': True}
+
+
 def build_molecule(cfg: Config, mc: MoleculeCfg, workdir: str) -> dict:
     """单个分子的完整分子层流水线，返回各中间产物路径。
 
     GAFF2/GAFF：antechamber(类型+电荷) + parmchk2。
     ReaxFF：仅 RDKit 3D 坐标（无类型/电荷，QEq 模拟中算）。
+    cfg.reuse_molecule=True 时先尝试复用已有产物（见 _try_reuse_molecule）。
     """
     os.makedirs(workdir, exist_ok=True)
     base = os.path.join(workdir, mc.name)
+
+    if cfg.reuse_molecule and cfg.forcefield != 'reaxff':
+        reused = _try_reuse_molecule(cfg, mc, base)
+        if reused is not None:
+            return reused
+
     sdf = base + '.sdf'
 
     print(f'== 分子层: {mc.name} ({mc.smiles}) ==')
@@ -147,6 +247,9 @@ def build_molecule(cfg: Config, mc: MoleculeCfg, workdir: str) -> dict:
         print(f'  parmchk2 → frcmod（{n_extra} 段补充参数）')
     else:
         print('  parmchk2 → frcmod（空：参数全部来自 GAFF 标准库）')
+
+    # 落指纹（总是写；下次 reuse_molecule=true 时据此判断能否复用）
+    _write_fingerprint(cfg, mc, base, natom, n_extra)
 
     return {'sdf': sdf, 'mol2': mol2, 'frcmod': frcmod, 'wavefn': wavefn,
             'natom': natom, 'n_extra': n_extra}

@@ -212,8 +212,21 @@ def prmtop_to_lammps(prmtop: str, inpcrd: str, out_lmp: str,
     L.append('')
     L.append('Atoms  # full')
     L.append('')
+    # 分子 id：按残基分组编号（Amber prmtop 无显式分子概念，残基即分子单位；
+    # 同残基对象共享引用，用 (chain, number) 作键稳定；无残基信息时兜底 1）
+    res_to_mol: dict = {}
+    mol_ids: list[int] = []
+    for a in s.atoms:
+        r = a.residue
+        if r is None:
+            mol_ids.append(1)
+            continue
+        key = (r.chain, r.number)
+        if key not in res_to_mol:
+            res_to_mol[key] = len(res_to_mol) + 1
+        mol_ids.append(res_to_mol[key])
     for i, a in enumerate(s.atoms):
-        L.append(f'{i + 1:6d} {1:6d} {type_id[a.type]:4d} {a.charge:12.6f} '
+        L.append(f'{i + 1:6d} {mol_ids[i]:6d} {type_id[a.type]:4d} {a.charge:12.6f} '
                  f'{a.xx:12.5f} {a.xy:12.5f} {a.xz:12.5f}  # {a.name} {a.residue.name}')
     L.append('')
     if nbond > 0:

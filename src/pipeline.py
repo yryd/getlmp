@@ -15,7 +15,8 @@ from config import Config
 from export_layer import build_data, validate_export
 from export_reaxff import build_data_reaxff
 from molecule_layer import build_molecule
-from packmol_layer import (mol2_to_xyz, parse_packed_xyz, run_packmol, sdf_to_xyz, write_inp)
+from packmol_layer import (mol2_to_xyz, parse_inp_structures, parse_packed_xyz,
+                           run_packmol, sdf_to_xyz, write_inp)
 from system_layer import (build_system_multi, build_system_single, count_mol2_topo)
 from xyz_export import export_system_xyz
 
@@ -71,23 +72,49 @@ def run_pipeline(cfg: Config) -> dict:
         for i, mc in enumerate(cfg.molecules):
             n_atoms.append(mol2_to_xyz(mols[i]['mol2'],
                                        os.path.join(workdir, mc.name + '.xyz')))
-        inp = os.path.join(workdir, 'packmol.inp')
-        write_inp(cfg, [os.path.join(workdir, mc.name + '.xyz') for mc in cfg.molecules],
-                  n_atoms, inp)
+        natom_by_name = {mc.name: n for mc, n in zip(cfg.molecules, n_atoms)}
+        if cfg.packmol.inp_file:
+            # 自定义 inp（用户改过：加 fixed 约束/改 number/同一类型拆多块等）。
+            # structure 文件名的类型须在 molecules 中；同一类型可拆多个块
+            # （如"固定 1 个 + 自由 N 个"），number 以 inp 内为准。
+            inp = cfg.packmol.inp_file
+            print(f'  [custom inp] 使用 {inp}（跳过自动生成 write_inp）')
+            structs = parse_inp_structures(inp)
+            counts = [n for _, n in structs]
+            type_names = [os.path.splitext(os.path.basename(f))[0] for f, _ in structs]
+            for i, (fname, n) in enumerate(structs):
+                print(f'    structure[{i}] {fname}  number {n}')
+            for t in type_names:
+                if t not in natom_by_name:
+                    raise RuntimeError(
+                        f'自定义 inp structure 文件 {t}.xyz 不在 molecules 中'
+                        f'（可用: {sorted(natom_by_name)}）；结构文件名须为 {{name}}.xyz')
+        else:
+            inp = os.path.join(workdir, 'packmol.inp')
+            write_inp(cfg, [os.path.join(workdir, mc.name + '.xyz') for mc in cfg.molecules],
+                      n_atoms, inp)
+            counts = [mc.count for mc in cfg.molecules]
+            type_names = [mc.name for mc in cfg.molecules]
         packed = run_packmol(inp, workdir)
-        blocks = parse_packed_xyz(packed, n_atoms, [mc.count for mc in cfg.molecules])
+        blocks = parse_packed_xyz(packed, counts, natom_by_name, type_names)
         sysr = build_system_multi(
             cfg, workdir,
             [m['mol2'] for m in mols],
             [m['frcmod'] for m in mols],
             blocks)
-        natom_input = sum(mc.count * m['natom'] for mc, m in zip(cfg.molecules, mols))
+        natom_input = sum(c * natom_by_name[t] for c, t in zip(counts, type_names))
         print(f'  体系原子总数（期望）: {natom_input}')
+        # 拓扑期望：按类型聚合拷贝数（自定义 inp 同一类型可拆多块）
+        type_count: dict[str, int] = {}
+        for c, t in zip(counts, type_names):
+            type_count[t] = type_count.get(t, 0) + c
         expected_topo = {'bonds': 0, 'angles': 0}
         for mc, m in zip(cfg.molecules, mols):
-            nb, na = count_mol2_topo(m['mol2'])
-            expected_topo['bonds'] += mc.count * nb
-            expected_topo['angles'] += mc.count * na
+            c = type_count.get(mc.name, 0)
+            if c:
+                nb, na = count_mol2_topo(m['mol2'])
+                expected_topo['bonds'] += c * nb
+                expected_topo['angles'] += c * na
         # packmol box 语义 [xlo,ylo,zlo,xhi,yhi,zhi] → LAMMPS 顺序 [xlo,xhi,ylo,yhi,zlo,zhi]
         b = cfg.packmol.box
         box = [b[0], b[3], b[1], b[4], b[2], b[5]]
@@ -168,6 +195,13 @@ def run_pipeline(cfg: Config) -> dict:
         keep += [p for p in glob.glob(os.path.join(workdir, '*.fch'))]
         keep += [p for p in glob.glob(os.path.join(workdir, '*.molden'))]
         keep += [p for p in glob.glob(os.path.join(workdir, '*.chg'))]
+        # 保留 frcmod 与指纹文件（reuse_molecule 复用分子层需要）
+        keep += [m['frcmod'] for m in mols if m.get('frcmod')]
+        keep += [p for p in glob.glob(os.path.join(workdir, '*.fingerprint.json'))]
+        # 保留 packmol inp：自动生成模板（供用户改）+ 自定义 inp（用户输入，不能移走）
+        keep.append(os.path.join(workdir, 'packmol.inp'))
+        if cfg.packmol.inp_file:
+            keep.append(cfg.packmol.inp_file)
         organize_workdir(workdir, keep, cfg.organize_backup)
     return report
 
@@ -225,14 +259,29 @@ def _run_pipeline_reaxff(cfg: Config, workdir: str, mols: list, multi: bool) -> 
         for i, mc in enumerate(cfg.molecules):
             n_atoms.append(sdf_to_xyz(mols[i]['sdf'],
                                       os.path.join(workdir, mc.name + '.xyz')))
-        inp = os.path.join(workdir, 'packmol.inp')
-        write_inp(cfg, [os.path.join(workdir, mc.name + '.xyz') for mc in cfg.molecules],
-                  n_atoms, inp)
+        natom_by_name = {mc.name: n for mc, n in zip(cfg.molecules, n_atoms)}
+        if cfg.packmol.inp_file:
+            inp = cfg.packmol.inp_file
+            print(f'  [custom inp] 使用 {inp}（跳过自动生成 write_inp）')
+            structs = parse_inp_structures(inp)
+            counts = [n for _, n in structs]
+            type_names = [os.path.splitext(os.path.basename(f))[0] for f, _ in structs]
+            for t in type_names:
+                if t not in natom_by_name:
+                    raise RuntimeError(
+                        f'自定义 inp structure 文件 {t}.xyz 不在 molecules 中'
+                        f'（可用: {sorted(natom_by_name)}）；结构文件名须为 {{name}}.xyz')
+        else:
+            inp = os.path.join(workdir, 'packmol.inp')
+            write_inp(cfg, [os.path.join(workdir, mc.name + '.xyz') for mc in cfg.molecules],
+                      n_atoms, inp)
+            counts = [mc.count for mc in cfg.molecules]
+            type_names = [mc.name for mc in cfg.molecules]
         packed = run_packmol(inp, workdir)
-        blocks = parse_packed_xyz(packed, n_atoms, [mc.count for mc in cfg.molecules])
+        blocks = parse_packed_xyz(packed, counts, natom_by_name, type_names)
         b = cfg.packmol.box
         box = [b[0], b[3], b[1], b[4], b[2], b[5]]   # packmol → LAMMPS 顺序
-        natom_input = sum(c * n for c, n in zip([mc.count for mc in cfg.molecules], n_atoms))
+        natom_input = sum(c * natom_by_name[t] for c, t in zip(counts, type_names))
     else:
         # 单分子：坐标块直接作为"一个拷贝"，盒自动推算
         m0 = mols[0]
@@ -274,6 +323,13 @@ def _run_pipeline_reaxff(cfg: Config, workdir: str, mols: list, multi: bool) -> 
         keep += [p for p in glob.glob(os.path.join(workdir, '*.fch'))]
         keep += [p for p in glob.glob(os.path.join(workdir, '*.molden'))]
         keep += [p for p in glob.glob(os.path.join(workdir, '*.chg'))]
+        # 保留 frcmod 与指纹文件（reuse_molecule 复用分子层需要）
+        keep += [m['frcmod'] for m in mols if m.get('frcmod')]
+        keep += [p for p in glob.glob(os.path.join(workdir, '*.fingerprint.json'))]
+        # 保留 packmol inp：自动生成模板（供用户改）+ 自定义 inp（用户输入，不能移走）
+        keep.append(os.path.join(workdir, 'packmol.inp'))
+        if cfg.packmol.inp_file:
+            keep.append(cfg.packmol.inp_file)
         organize_workdir(workdir, keep, cfg.organize_backup)
     return report
 

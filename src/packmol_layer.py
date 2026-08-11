@@ -82,6 +82,33 @@ def write_inp(cfg: Config, struct_xyz: list[str], n_atoms: list[int],
         f.write('\n'.join(lines))
 
 
+def parse_inp_structures(inp_path: str) -> list[tuple[str, int]]:
+    """解析 packmol inp → [(structure 文件名, number), ...]（按出现顺序）。
+
+    用于自定义 inp（packmol.inp_file）：structure 顺序须与 molecules 一致
+    （用户保证），number 以 inp 内为准（可与 yaml count 不同，分块/守恒校验
+    都用它）。
+    """
+    with open(inp_path, encoding='utf-8', errors='replace') as f:
+        lines = f.read().splitlines()
+    structs: list[tuple[str, int]] = []
+    cur: str | None = None
+    for ln in lines:
+        s = ln.strip()
+        if s.lower().startswith('structure '):
+            cur = s.split(None, 1)[1].strip()
+        elif s.lower().startswith('number ') and cur is not None:
+            try:
+                n = int(s.split(None, 1)[1].strip())
+            except ValueError:
+                raise RuntimeError(f'packmol inp number 解析失败: {ln!r}')
+            structs.append((cur, n))
+            cur = None
+    if not structs:
+        raise RuntimeError(f'packmol inp 未找到 structure/number 块: {inp_path}')
+    return structs
+
+
 def run_packmol(inp_path: str, workdir: str) -> str:
     """跑 packmol（21.x 用法 `packmol < inp`）。
 
@@ -104,16 +131,21 @@ def run_packmol(inp_path: str, workdir: str) -> str:
     return packed
 
 
-def parse_packed_xyz(packed_xyz: str, n_atoms: list[int], counts: list[int]) -> list[list[tuple]]:
+def parse_packed_xyz(packed_xyz: str, counts: list[int],
+                     natom_by_name: dict[str, int],
+                     type_names: list[str]) -> list[list[list[tuple]]]:
     """解析 packed.xyz → 每个分子类型一个坐标块。
 
     返回 list[type_index] -> list[分子拷贝] -> list[(elem, x, y, z)]。
-    packmol 输出按 structure 顺序连续排列，块大小 = count × natom。
+    packmol 输出按 structure 顺序连续排列，块大小 = number × natom(type)。
+    counts/type_names 一一对应（同一类型可拆多个 structure 块，如"固定 1 个 +
+    自由 N 个"）；blocks 按类型首次出现顺序排列（与 molecules 顺序一致的前提：
+    structure 首块顺序 = molecules 顺序）。
     """
     with open(packed_xyz) as f:
         lines = f.read().splitlines()
     total = int(lines[0].split()[0])
-    expect = sum(c * n for c, n in zip(counts, n_atoms))
+    expect = sum(c * natom_by_name[t] for c, t in zip(counts, type_names))
     if total != expect:
         raise RuntimeError(f'packed.xyz 原子数 {total} != 期望 {expect}')
     coords = []
@@ -125,13 +157,15 @@ def parse_packed_xyz(packed_xyz: str, n_atoms: list[int], counts: list[int]) -> 
     if len(coords) != total:
         raise RuntimeError(f'packed.xyz 实际坐标行 {len(coords)} != 头部 {total}')
 
-    blocks = []
+    order: list[str] = []
+    for t in type_names:
+        if t not in order:
+            order.append(t)
+    blocks = {t: [] for t in order}
     idx = 0
-    for c, n in zip(counts, n_atoms):
-        block = []
+    for c, t in zip(counts, type_names):
+        n = natom_by_name[t]
         for _ in range(c):
-            mol_coords = coords[idx:idx + n]
+            blocks[t].append(coords[idx:idx + n])
             idx += n
-            block.append(mol_coords)
-        blocks.append(block)
-    return blocks
+    return [blocks[t] for t in order]

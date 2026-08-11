@@ -127,11 +127,76 @@ def test_methane_ethanol_mix() -> None:
     run_getlmp(_cfg_mix(), expected_atoms=95)
 
 
+def test_custom_inp_reuse() -> None:
+    """自定义 packmol inp（乙醇拆 1 fixed + 4 free）+ reuse_molecule 复用分子层。
+
+    流程：第一次跑生成默认 inp → 改造（fixed 钉在盒中心）→ yaml 加
+    inp_file + reuse_molecule → 第二次跑。验证：退出码、[reuse] 复用提示、
+    [custom inp] 生效、95 原子守恒、校验通过。
+    """
+    with tempfile.TemporaryDirectory(prefix="getlmp_test_") as tmp:
+        yaml_path = os.path.join(tmp, "input.yaml")
+        with open(yaml_path, "w", encoding="utf-8") as f:
+            f.write(_cfg_mix())
+
+        # 第一次跑：生成默认 packmol.inp（留在 workdir 根目录）
+        r1 = subprocess.run(
+            [sys.executable, str(MAIN_PY), "input.yaml"], cwd=tmp,
+            capture_output=True, text=True, timeout=600)
+        assert r1.returncode == 0, r1.stdout + r1.stderr
+        inp_path = os.path.join(tmp, "work", "packmol.inp")
+        assert os.path.exists(inp_path), f"默认 packmol.inp 未保留在 workdir:\n{r1.stdout + r1.stderr}"
+        with open(inp_path, encoding="utf-8") as f:
+            default_inp = f.read()
+
+        # 改造：乙醇块 → 1 fixed（盒中心）+ 4 自由
+        ethanol_block = ("structure ethanol.xyz\n"
+                         "  number 5\n"
+                         "  inside box 0.000 0.000 0.000 30.000 30.000 30.000\n"
+                         "end structure\n")
+        assert ethanol_block in default_inp, "默认 inp 未找到乙醇块"
+        fixed_block = ("structure ethanol.xyz\n"
+                       "  number 1\n"
+                       "  fixed 15.0 15.0 15.0 0.0 0.0 0.0 1.0\n"
+                       "end structure\n"
+                       "\n"
+                       + ethanol_block.replace("number 5", "number 4"))
+        my_inp = os.path.join(tmp, "work", "my.inp")
+        with open(my_inp, "w", encoding="utf-8") as f:
+            f.write(default_inp.replace(ethanol_block, fixed_block))
+
+        # 第二次跑：自定义 inp + 分子层复用
+        cfg2 = _cfg_mix().replace(
+            "packmol:\n  box: [0, 0, 0, 30, 30, 30]",
+            "packmol:\n  box: [0, 0, 0, 30, 30, 30]\n  inp_file: work/my.inp",
+        ) + "reuse_molecule: true\n"
+        with open(yaml_path, "w", encoding="utf-8") as f:
+            f.write(cfg2)
+        r2 = subprocess.run(
+            [sys.executable, str(MAIN_PY), "input.yaml"], cwd=tmp,
+            capture_output=True, text=True, timeout=600)
+        out2 = r2.stdout + r2.stderr
+        assert r2.returncode == 0, f"第二次跑退出码 {r2.returncode}:\n{out2}"
+        assert "[reuse] methane" in out2, f"甲烷未复用分子层:\n{out2}"
+        assert "[custom inp]" in out2, f"未使用自定义 inp:\n{out2}"
+
+        data_path = os.path.join(tmp, "work", "data.lmp")
+        assert _parse_atoms(data_path) == 95, f"第二次跑原子数不符:\n{out2}"
+        report_path = os.path.join(tmp, "work", "_others", "check_report.txt")
+        with open(report_path, encoding="utf-8") as f:
+            report = f.read()
+        assert "结论: 通过" in report, f"第二次跑校验未通过:\n{report}"
+
+        # 自定义 inp 不被 organize 移走（下次还能用）
+        assert os.path.exists(my_inp), "自定义 inp 被 organize 移走了"
+
+
 def main() -> int:
     tests = [
         ("甲烷单体", test_methane_single),
         ("乙醇单体", test_ethanol_single),
         ("混合体系(甲烷10+乙醇5)", test_methane_ethanol_mix),
+        ("自定义inp+分子层复用", test_custom_inp_reuse),
     ]
     failed = 0
     for name, fn in tests:

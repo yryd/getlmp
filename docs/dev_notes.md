@@ -190,3 +190,35 @@ AmberTools 26 已内置 `BCCPARM_ABCG2.DAT` / `ATOMTYPE_ABCG2.DEF`（conda 环�
 
 每个阶段交付：代码 + 检查报告。运行检查报告随每次运行生成于 `workdir/check_report.txt`
 ；开发经验与验收结论归档至本文档。
+
+## 9. 自定义 packmol inp + 分子层复用（2026-08-11 实现）
+
+**背景**：用户要"改 packmol 生成的 inp（固定分子/改 number）后直接出 lmp"。两个决策点
+用户拍板：`reuse_molecule` 默认关；自定义 inp 放 workdir（`packmol.inp_file: work/my.inp`）。
+
+**实现**：
+1. `packmol.inp_file`（config）：非空时跳过 `write_inp`，直接用该文件跑 packmol。
+   structure 文件名须为 `{name}.xyz`（与 molecules 的 name 对应）；number 以 inp 为准
+   （可不同于 yaml count）；盒边界仍以 yaml `packmol.box` 为准（inp 里改 box 不会同步）。
+   校验：仅多分子可用、文件必须存在、structure 类型名必须在 molecules 中。
+2. **同一类型拆多块**：packmol 固定分子的常规做法是同一文件两个 structure 块
+   （`fixed` 1 个 + 自由 N 个）。`parse_packed_xyz` 重构为按
+   `(counts, natom_by_name, type_names)` 解析，type_names 可重复（同类型多次出现），
+   blocks 按类型首次出现顺序排列（= molecules 顺序，要求 structure 首块顺序一致）。
+3. `reuse_molecule`（默认关）：分子层复用。指纹文件 `{name}.fingerprint.json`
+   （SMILES/力场/电荷方法/净电荷/seed/resname/QM 设置 + natom/n_extra）**总是写**
+   （不依赖开关，首次跑完即落盘，下次开复用即可用）。复用条件：指纹一致 + mol2/frcmod
+   存在（RESP/RESP2 且 esp.enabled 还需波函数存在，缺则重算）。指纹变化自动重算。
+   count/box/inp 不在指纹内——改装盒参数不重跑分子层（这正是用途）。
+4. **organize 调整**：keep 增加 `{name}.frcmod`、`*.fingerprint.json`、`packmol.inp`
+   （模板）与 `inp_file`（用户输入，不能移走）。
+5. **顺带修复（既有 bug）**：`prmtop_to_lammps.py` Atoms 段 mol-id 原来硬编码 1，
+   多分子 data.lmp 所有原子 molecule-id=1（影响 fix rigid 等按分子操作）。
+   改为按残基 `(chain, number)` 分组编号 → 每分子独立 mol-id。
+
+**验收**（/tmp/getlmp_custom_test，甲烷10+乙醇5 box 30³）：
+- 第二次跑（reuse=true + inp_file=work/my.inp，乙醇拆 1 fixed + 4 free）：分子层
+  `[reuse]` 跳过 antechamber；fixed 乙醇质心距盒中心 0.21 Å；95 atoms / 80 bonds /
+  125 angles 守恒校验全过；mol-id 1-15 正确分组。
+- 改 seed 触发指纹不匹配 → 自动重算，校验通过。
+- 回归测试 3/3 通过，pyflakes 零告警。
