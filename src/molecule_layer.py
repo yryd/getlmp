@@ -321,7 +321,9 @@ def _write_gaussian_input(path: str, title: str, atoms: list[list],
     if solv:
         route += f' scrf=(smd,solvent={solv})'
     if qm.opt:
-        route += ' opt'
+        # nosymm：禁对称性原子重排（苯 6H 会换序），保证 Input orientation
+        # 原子顺序与 mol2 一致，坐标回写才不错位（2026-08-11 实测）。
+        route += ' opt nosymm'
     lines = [
         f'%nprocshared={os.environ.get("SMI2DATA_NPROC", "8")}',
         f'%mem={os.environ.get("SMI2DATA_MEM", "4GB")}',
@@ -343,10 +345,14 @@ def _run_gaussian(gjf: str, workdir: str, qm) -> str:
     """运行 g16 单点，返回 log 路径；检查 Normal termination。"""
     _find_g16()   # PATH 探测；GAUSS_* 环境由 .bashrc 提供，子进程直接继承
     log = os.path.splitext(gjf)[0] + '.log'
-    print(f'  [run] g16 {os.path.basename(gjf)} '
-          f'({qm.method}/{qm.basis}'
-          + (f' + {qm.solvent}' if qm.solvent else '')
-          + ', pop=MK ESP)')
+    # 从 gjf 读实际 route（RESP2 气相单点会覆盖 solvent，qm.solvent 打印会误导）
+    route = ''
+    for ln in open(gjf):
+        s = ln.strip()
+        if s.startswith('#p'):
+            route = s
+            break
+    print(f'  [run] g16 {os.path.basename(gjf)} ({route})')
     try:
         r = subprocess.run(['g16', os.path.basename(gjf), os.path.basename(log)],
                            cwd=workdir, capture_output=True, text=True,
@@ -380,6 +386,98 @@ def _run_formchk(chk: str, fch: str, workdir: str, qm) -> str:
         raise RuntimeError(f'formchk 失败\n--- stdout ---\n{r.stdout[-800:]}\n'
                            f'--- stderr ---\n{r.stderr[-800:]}')
     return fch
+
+
+def _parse_g16_opt_coords(log: str) -> list[list[float]]:
+    """从 g16 log 解析优化几何（Input orientation 最后一块，单位 Å）。
+
+    返回 [[x, y, z], ...]，原子顺序 = 输入顺序（nosymm 保证不重排）。
+    要求 log 含 'Stationary point found'（优化收敛）；否则报错。
+    """
+    text = open(log).read()
+    if 'Stationary point found' not in text:
+        tail = text[-1500:]
+        raise RuntimeError(
+            f'几何优化未收敛（log 无 Stationary point found）: {log}\n'
+            f'--- log 尾部 ---\n{tail}')
+    blocks = []           # 每块 = Input orientation 的坐标行
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        if 'Input orientation:' in lines[i]:
+            j = i + 1
+            # 跳过表头区：两条 --- 分隔线夹 Center/Atomic 表头两行
+            dashes = 0
+            while j < len(lines) and dashes < 2:
+                if lines[j].strip().startswith('---'):
+                    dashes += 1
+                j += 1
+            coords = []
+            while j < len(lines) and not lines[j].strip().startswith('---'):
+                p = lines[j].split()
+                if len(p) >= 6:
+                    try:
+                        coords.append([float(p[3]), float(p[4]), float(p[5])])
+                    except ValueError:
+                        pass
+                j += 1
+            if coords:
+                blocks.append(coords)
+            i = j
+        else:
+            i += 1
+    if not blocks:
+        raise RuntimeError(f'log 中找不到 Input orientation 坐标块: {log}')
+    return blocks[-1]     # 最后一块 = 优化收敛几何
+
+
+def _update_mol2_coords(mol2: str, xyz: list[list[float]]) -> None:
+    """把优化坐标写回 mol2 ATOM 段第 3–5 列（保留类型/电荷），原地修改。"""
+    with open(mol2) as f:
+        lines = f.read().splitlines()
+    # 精确数 ATOM 段行数（下个 @<TRIPOS> 前的行）
+    n_atom = 0
+    in_atom = False
+    for ln in lines:
+        s = ln.strip()
+        if s.startswith('@<TRIPOS>ATOM'):
+            in_atom = True
+            continue
+        if s.startswith('@<TRIPOS>'):
+            in_atom = False
+            continue
+        if in_atom and s and not s.startswith('#'):
+            n_atom += 1
+    if n_atom != len(xyz):
+        raise RuntimeError(f'mol2 原子数 {n_atom} != 优化坐标数 {len(xyz)}: {mol2}')
+    out = []
+    in_atom = False
+    i = 0
+    for ln in lines:
+        s = ln.strip()
+        if s.startswith('@<TRIPOS>ATOM'):
+            in_atom = True
+            out.append(ln)
+            continue
+        if s.startswith('@<TRIPOS>'):
+            in_atom = False
+            out.append(ln)
+            continue
+        if in_atom and s and not s.startswith('#'):
+            parts = ln.split()
+            if len(parts) >= 6:
+                parts[2] = '%.6f' % xyz[i][0]
+                parts[3] = '%.6f' % xyz[i][1]
+                parts[4] = '%.6f' % xyz[i][2]
+                i += 1
+                out.append('%-8s %-8s %12s %12s %12s %-6s %-3s %-6s %12s' % (
+                    parts[0], parts[1], parts[2], parts[3], parts[4],
+                    parts[5], parts[6], parts[7], parts[8]))
+                continue
+        out.append(ln)
+    assert i == len(xyz), f'写回坐标数 {i} != {len(xyz)}'
+    with open(mol2, 'w') as f:
+        f.write('\n'.join(out) + '\n')
 
 
 def _build_esp_file(esp_path: str, atoms_xyz: list[list], vdw_path: str) -> int:
@@ -417,7 +515,7 @@ def _build_resp_charges(mc: MoleculeCfg, workdir: str, base: str,
                                             net_charge, qm)
     if qm.engine == 'quick':
         return _build_resp_charges_quick(mc, workdir, base, mol2,
-                                         net_charge, esp_enabled)
+                                         net_charge, esp_enabled, qm)
     raise ValueError(f'不支持的 qm.engine={qm.engine!r}')
 
 
@@ -435,6 +533,13 @@ def _build_resp_charges_gaussian(mc: MoleculeCfg, workdir: str, base: str,
 
     _write_gaussian_input(gjf, mc.name, atoms, net_charge, qm, chk)
     _run_gaussian(gjf, workdir, qm)
+    if qm.opt:
+        # 优化几何回写 mol2（先回写坐标，再 formchk/RESP：
+        # 电荷拟合与最终坐标都用优化后的几何，两者一致）
+        log = os.path.splitext(gjf)[0] + '.log'
+        xyz = _parse_g16_opt_coords(log)
+        _update_mol2_coords(mol2, xyz)
+        print(f'  [info] qm.opt: 优化几何已回写 mol2（{len(xyz)} atoms）')
     _run_formchk(chk, fch, workdir, qm)
     print(f'  [run] Multiwfn RESP 拟合 ← {os.path.basename(fch)}')
     charges, _chg = resp_from_fch(fch, workdir=workdir,
@@ -460,11 +565,20 @@ def _build_resp2_charges(mc: MoleculeCfg, workdir: str, base: str,
     _write_gaussian_input(gjf_gas, mc.name, atoms, net_charge, qm, chk_gas,
                           solvent='')
     _run_gaussian(gjf_gas, workdir, qm)
+    if qm.opt:
+        _parse_g16_opt_coords(os.path.splitext(gjf_gas)[0] + '.log')   # 收敛检查
     _run_formchk(chk_gas, fch_gas, workdir, qm)
     # 溶剂单点（PCM）
     _write_gaussian_input(gjf_solv, mc.name, atoms, net_charge, qm, chk_solv,
                           solvent=qm.solvent)
     _run_gaussian(gjf_solv, workdir, qm)
+    if qm.opt:
+        # RESP2 惯例：回写溶剂(PCM)优化坐标（更贴近真实环境），gas 仅用于电荷混合
+        log_solv = os.path.splitext(gjf_solv)[0] + '.log'
+        xyz = _parse_g16_opt_coords(log_solv)
+        _update_mol2_coords(mol2, xyz)
+        print(f'  [info] qm.opt: RESP2 回写溶剂({qm.solvent})优化几何 '
+              f'（{len(xyz)} atoms）')
     _run_formchk(chk_solv, fch_solv, workdir, qm)
     # Multiwfn RESP2（两次 RESP + δ 混合）
     print(f'  [run] Multiwfn RESP2 拟合 ← gas + {qm.solvent} (δ={qm.delta})')
@@ -477,8 +591,11 @@ def _build_resp2_charges(mc: MoleculeCfg, workdir: str, base: str,
 
 def _build_resp_charges_quick(mc: MoleculeCfg, workdir: str, base: str,
                               mol2: str, net_charge: int,
-                              esp_enabled: bool = False) -> list[float]:
+                              esp_enabled: bool = False,
+                              qm=None) -> list[float]:
     """RESP 电荷拟合（QUICK ESP + resp 两阶段，旧路径），返回电荷列表。"""
+    if qm is not None and qm.opt:
+        print('  [info] quick 引擎无几何优化器，qm.opt 已忽略（保持单点）')
     atoms = _mol2_atoms(mol2)
     quick_in = base + '_quick.in'
     quick_out = base + '_quick.out'

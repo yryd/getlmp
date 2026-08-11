@@ -105,6 +105,33 @@ export QUICK_BASIS=$CONDA_PREFIX/AmberTools/src/quick/basis
   根目录**（organize 不清除，VMD/Multiwfn 二次分析用）。
 - 旧点电荷近似粗 cube（esp_export.py）已废弃删除；esp.spacing/buffer 保留但不再生效。
 
+**qm.opt 优化几何回写 mol2（2026-08-11 实现 + 验收）**：
+
+`qm.opt: true` 时 g16 route 加 `opt nosymm`，优化完成后从 log 的
+`Input orientation` **最后一块**解析坐标（单位 Å），回写 mol2 ATOM 段，
+最终 `data.lmp` 原子坐标 = QM 优化结构（不再只优化电荷、浪费几何）。
+
+- **nosymm 必要性**：g16 默认对称性会把对称分子原子重排（苯 6H 换序），
+  导致坐标与 mol2 错位。`nosymm` 保证 Input orientation 与输入顺序一致。
+- **收敛检查**：解析前必须出现 `Stationary point found`，否则报错
+  （g16 优化不收敛也可能 Normal termination，仅查终止会漏）。
+- **RESP2 回写溶剂坐标**：气相/溶剂双单点各自优化（RESP2 惯例），
+  默认回写**溶剂(PCM)优化坐标**（更贴近真实环境）；gas 单点仅做收敛检查。
+- **QUICK 路径**：无几何优化器，`qm.opt` 被忽略（打印提示不报错）。
+
+**验证数据（2026-08-11）**：
+- 乙醇 opt:true（RESP）：全链路通过，9 原子，坐标回写成功
+  （优化前后总位移 0.80 Å，data.lmp 坐标 = 优化坐标 = mol2 坐标），
+  电荷守恒 sum=0，tleap 正常。
+- 苯 opt:true（RESP，对称分子专项）：12 原子顺序无重排（data.lmp 坐标 == mol2
+  坐标逐一匹配），C-C=1.390 Å、C-H=1.083 Å 符合实验值；
+  RESP 电荷 6C≈-0.107±0.004、6H≈+0.107±0.002（近似等价，差异为拟合数值噪声，
+  远小于电荷量级；顺序错位会 >50% 偏差）。
+- RESP2 opt:true（乙醇 + water PCM，δ=0.5）：双单点均优化收敛，
+  mol2 坐标 = 溶剂优化坐标（vs gas 位移 0.18 Å），电荷守恒 sum=0。
+- 边界：伪造"优化未收敛但正常退出" log → 正确报错；mol2/坐标原子数不匹配 → 正确报错。
+- 回归：opt:false 零破坏（tests 3/3 通过）。
+
 ### 4.2 QUICK 回退路径（`qm.engine: quick`，2026-08-10 验收）
 
 链路：`mol2 → QUICK(HF/6-31G* ESP on vdW 表面) → 自建 .esp → resp 两阶段拟合 → 写回 mol2`。

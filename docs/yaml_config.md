@@ -112,7 +112,7 @@ qm:
   g16root: ''          # G16 根目录（空=自动探测；通常不用配）
   method: b3lyp        # QM 方法（531 推荐 B3LYP-D3(BJ)）
   basis: def2TZVP      # 基组（G16 命名；文献写法 def2-TZVP 会自动转）
-  opt: false           # true=先几何优化再算 ESP；默认 false=单点（坐标用 RDKit 构象）
+  opt: false           # true=先几何优化再算 ESP，且优化坐标回写 mol2（最终 data.lmp 用 QM 优化结构）；默认 false=单点
   solvent: ''          # 空=气相；'water'/'ethanol'（PCM 隐式溶剂；RESP2 必需）
   resp2: false         # RESP2 开关（需 solvent 非空）
   delta: 0.5           # RESP2 δ 混合系数 [0,1]
@@ -125,7 +125,7 @@ qm:
 | `g16root` | str | `''` | G16 安装根目录。**一般留空**：代码按 PATH 找 `g16`（见 `docs/install.md`），只需 G16 已在 PATH 中。仅非常规安装位置（不在 PATH）时才显式指定 |
 | `method` | str | `b3lyp` | 泛函/方法名，G16 route 直接使用。531 路线推荐 `b3lyp`（代码自动补 `em=GD3BJ` 色散校正） |
 | `basis` | str | `def2TZVP` | 基组。注意 **G16 不认带连字符的 `def2-TZVP`**，代码会自动把 `def2-` 转 `def2`（兼容文献写法）。阴离子体系可配 `ma-def2TZVP` 等 |
-| `opt` | bool | `false` | `true` 时在 g16 route 加 `opt`，**先几何优化再算 ESP**；默认 `false`=单点（几何=RDKit ETKDG 构象→mol2，不经 QM 优化）。RESP 惯例为单点，一般保持默认 |
+| `opt` | bool | `false` | `true` 时 g16 先做几何优化（route 加 `opt nosymm`），**优化坐标回写 mol2**，最终 `data.lmp` 原子坐标 = QM 优化结果（不再浪费优化）。默认 `false`=单点（几何=RDKit ETKDG 构象→mol2，不经 QM 优化）。RESP 惯例为单点，一般保持默认；需要"QM 优化结构做最终建模"时开启。注意：`nosymm` 保证原子顺序与 mol2 一致（苯等对称分子不会重排）；RESP2 开启时回写**溶剂(PCM)优化坐标**（更贴近真实环境）；`engine: quick` 无优化器，该键被忽略 |
 | `solvent` | str | `''` | 隐式溶剂名（G16 SMD 关键词，如 `water`/`ethanol`）。非空时 route 加 `scrf=(smd,solvent=xxx)`。**RESP2 必需**（溶剂单点） |
 | `resp2` | bool | `false` | RESP2 开关（与 `charge_method: resp2` 配套，见 §6 校验） |
 | `delta` | float | `0.5` | RESP2 混合系数：`q = (1-δ)·q_gas + δ·q_solv`。取值范围 [0,1]，越接近 1 越偏向溶剂化 |
@@ -206,7 +206,7 @@ packmol:
 ## 8. 常见注意
 
 1. **相对路径**以配置文件所在目录为基准（`workdir`、`output`）。
-2. **`qm.opt: true` 会显著变慢**（几何优化通常需多轮 SCF）；RESP 常规用单点即可。
+2. **`qm.opt: true` 会显著变慢**（几何优化通常需多轮 SCF）；RESP 常规用单点即可。开启后优化坐标会回写 mol2（最终 `data.lmp` 用 QM 优化结构），苯等对称分子已验证原子顺序正确（`nosymm` 规避重排）。
 3. **`organize_output: false`** 可关闭自动整理，全部中间文件留在 `workdir/` 便于排查。
 4. **`organize_backup: true`** 会在 `_others/` 同名文件追加时间戳保留多份（默认覆盖只留最新）。
 5. 多分子体系（任一条目 count>1）**不会导出 ESP 可视化**（当前仅单分子支持）。
