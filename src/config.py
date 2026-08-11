@@ -29,12 +29,15 @@ class MoleculeCfg:
 class PackmolCfg:
     enabled: bool = False    # count>1 时自动启用
     preset: str = 'bulk'     # bulk / slab / interface（阶段 2 先实现 bulk）
-    box: list = None         # [xlo,ylo,zlo,xhi,yhi,zhi]
+    box: list = None         # [xlo,ylo,zlo,xhi,yhi,zhi]（与 density 二选一；density 优先）
     seed: int = 2026
     tolerance: float = 2.0   # Å
+    nloop0: int = 1000       # packmol 初始随机放置尝试次数（默认 20 对高密度大体系常不够，报错提示加大）
+    density: float = 0.0     # 目标密度 g/cm³（>0 时按 总质量/密度 自动算立方盒，忽略 box）
     inp_file: str = ''       # 自定义 packmol inp（绝对路径，load_config 已解析）。
                              # 非空时跳过自动生成 write_inp，直接用该文件跑 packmol；
                              # structure 顺序须与 molecules 一致（可改 number 与约束行）。
+                             # 与 density 互斥（自动盒子只对自动生成的 inp 生效）。
 
 
 @dataclass
@@ -208,9 +211,14 @@ def load_config(path: str) -> Config:
         cfg.packmol.box = [float(v) for v in box]
     cfg.packmol.seed = int(pm.get('seed', cfg.seed))
     cfg.packmol.tolerance = float(pm.get('tolerance', 2.0))
+    cfg.packmol.nloop0 = int(pm.get('nloop0', 1000))
+    cfg.packmol.density = float(pm.get('density', 0.0))
     cfg.packmol.enabled = multi or bool(pm.get('enabled', False))
-    if cfg.packmol.enabled and cfg.packmol.box is None:
-        raise ValueError('多分子体系需要 packmol.box（如 [0,0,0,60,60,60]）')
+    if cfg.packmol.enabled and cfg.packmol.box is None and cfg.packmol.density <= 0:
+        raise ValueError('多分子体系需要 packmol.box（如 [0,0,0,60,60,60]）'
+                         '或 packmol.density（g/cm³，自动按总质量算立方盒）')
+    if cfg.packmol.density <= 0:
+        cfg.packmol.density = 0.0
     if cfg.packmol.enabled and cfg.packmol.preset != 'bulk':
         raise ValueError(f'阶段 2 仅支持 packmol preset=bulk，当前 {cfg.packmol.preset!r}；'
                          f'slab/interface 见规划文档（后续阶段）')
@@ -218,6 +226,10 @@ def load_config(path: str) -> Config:
     if inp_file:
         if not cfg.packmol.enabled:
             raise ValueError('packmol.inp_file 仅多分子体系（count>1 或 packmol.enabled）可用')
+        if cfg.packmol.density > 0:
+            raise ValueError('packmol.inp_file 与 packmol.density 互斥'
+                             '（自动盒子只对自动生成的 inp 生效；自定义 inp 里可写 density 关键字，'
+                             '但盒子由 packmol 内部计算，data.lmp 盒边界无法对齐，故不支持）')
         p = inp_file if os.path.isabs(inp_file) else os.path.join(cfg.base_dir, inp_file)
         if not os.path.exists(p):
             raise ValueError(f'packmol.inp_file 不存在: {p}')

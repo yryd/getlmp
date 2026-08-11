@@ -158,15 +158,17 @@ esp:
 
 ## 5. packmol 段（多分子装盒）
 
-> `count>1` 自动启用（`enabled` 无需手写）；启用时**必须**给 `box`。
+> `count>1` 自动启用（`enabled` 无需手写）；启用时**必须**给 `box` 或 `density`（二选一，`density` 优先）。
 
 ```yaml
 packmol:
   enabled: true     # 多分子自动开；单分子想强制装盒可手写 true
   preset: bulk      # 当前仅支持 bulk（slab/interface 后续阶段）
-  box: [0, 0, 0, 60, 60, 60]   # [xlo, ylo, zlo, xhi, yhi, zhi] Å
+  box: [0, 0, 0, 60, 60, 60]   # [xlo, ylo, zlo, xhi, yhi, zhi] Å（与 density 二选一）
+  density: 1.0      # 目标密度 g/cm³（>0 时自动按 总质量/密度 算立方盒，忽略 box）
   seed: 2026        # 装盒随机种子（默认取顶层 seed）
   tolerance: 2.0    # 装盒容差（Å，分子间最小间距）
+  nloop0: 1000      # packmol 初始随机放置尝试次数（默认 20 对高密度大体系常不够）
   inp_file: work/my.inp   # 自定义 packmol inp（可选；非空时跳过自动生成，直接用该文件）
 ```
 
@@ -174,10 +176,12 @@ packmol:
 |----|------|------|------|
 | `enabled` | bool | `false`（任一条目 count>1 时自动 true） | 是否 packmol 装盒。单分子体系也可显式 `true` 强制装盒 |
 | `preset` | str | `bulk` | 装盒模式。**当前仅 `bulk`**；`slab`/`interface` 在规划中（填了会报错） |
-| `box` | list[6] | 无 | 盒尺寸 `[xlo, ylo, zlo, xhi, yhi, zhi]`（Å）。**多分子必填**，单分子可不填（用 `buffer` 推算） |
+| `box` | list[6] | 无 | 盒尺寸 `[xlo, ylo, zlo, xhi, yhi, zhi]`（Å）。与 `density` 二选一（`density` 优先） |
+| `density` | float | `0.0` | 目标密度 g/cm³。>0 时按 **L = (总质量/密度)^(1/3)** 自动算立方盒并写回 `box`（write_inp 与 data.lmp 盒边界共用），质量按各分子 mol2 元素组成 × count 求和 / N_A（ReaxFF 按 `reax_elements` 元素表）。装不下（packmol 报错）时调小 `density`（盒子变大）或调小 `tolerance` |
 | `seed` | int | 顶层 `seed` | 装盒随机种子 |
-| `tolerance` | float | `2.0` | packmol tolerance（Å） |
-| `inp_file` | str | `''` | 自定义 packmol inp 路径（相对配置文件所在目录或绝对路径）。非空时**跳过自动生成** write_inp，直接用该文件跑 packmol，适合加约束（如 `fixed` 固定分子位置）、改 number、同一类型拆多个 structure 块。**规则**：structure 文件名为 `{name}.xyz`（与 molecules 的 name 对应）；number 以 inp 内为准（可不同于 yaml count）；盒边界以 yaml `box` 为准（inp 里改 inside box 不会同步到 data.lmp） |
+| `tolerance` | float | `2.0` | packmol tolerance（Å，分子间最小间距） |
+| `nloop0` | int | `1000` | packmol 初始随机放置循环数（官方默认 20，高密度/大分子体系常不足，报错会提示加大） |
+| `inp_file` | str | `''` | 自定义 packmol inp 路径（相对配置文件所在目录或绝对路径）。非空时**跳过自动生成** write_inp，直接用该文件跑 packmol，适合加约束（如 `fixed` 固定分子位置）、改 number、同一类型拆多个 structure 块。**规则**：structure 文件名为 `{name}.xyz`（与 molecules 的 name 对应）；number 以 inp 内为准（可不同于 yaml count）；盒边界以 yaml `box` 为准（inp 里改 inside box 不会同步到 data.lmp）；**与 `density` 互斥** |
 
 ---
 
@@ -187,8 +191,8 @@ packmol:
 |------|------|
 | `charge_method: resp2` | 必须同时 `qm.engine: gaussian`（QUICK 无 resp2）、`qm.resp2: true`、`qm.solvent` 非空 |
 | `forcefield: reaxff` | `charge_method` 必须 `none`；ReaxFF 路径忽略 qm/esp 段 |
-| `packmol.enabled`（多分子） | 必须 `packmol.box`；`preset` 只能 `bulk` |
-| `packmol.inp_file` | 仅多分子可用（单分子报错）；文件必须存在；structure 文件名须为 `{name}.xyz`（对应 molecules 的 name） |
+| `packmol.enabled`（多分子） | 必须 `packmol.box` 或 `packmol.density`（>0）；`preset` 只能 `bulk` |
+| `packmol.inp_file` | 仅多分子可用（单分子报错）；文件必须存在；structure 文件名须为 `{name}.xyz`（对应 molecules 的 name）；**与 `packmol.density` 互斥** |
 | `qm.delta` | 必须在 [0,1] |
 | `esp.spacing` / `esp.buffer` | 必须为正数 |
 | `reax_elements` | 字符串列表；重复元素自动去重 |

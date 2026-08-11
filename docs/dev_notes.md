@@ -222,3 +222,31 @@ AmberTools 26 已内置 `BCCPARM_ABCG2.DAT` / `ATOMTYPE_ABCG2.DEF`（conda 环�
   125 angles 守恒校验全过；mol-id 1-15 正确分组。
 - 改 seed 触发指纹不匹配 → 自动重算，校验通过。
 - 回归测试 3/3 通过，pyflakes 零告警。
+
+
+## 10. packmol 按密度自动算盒（2026-08-11 实现）
+
+**需求**：PIP 300 + TMC 200，密度 1 g/cm³。原来 `packmol.box` 手写盒尺寸，不知道
+密度怎么对应盒子。
+
+**实现**：`packmol.density`（g/cm³，>0 启用）→ 按
+**L = (总质量/密度)^(1/3)** 自动算立方盒并写回 `cfg.packmol.box`
+（write_inp 的 inside box 与 data.lmp 盒边界共用，下游零改动）。
+质量 = Σ(count × 分子量)/N_A：GAFF 从 mol2 元素组成查 ELEMENT_MASS；ReaxFF 从
+`reax_elements` 元素表。`nloop0`（默认 1000）写入 inp——packmol 官方默认 20，
+高密度大体系常因初始随机放置循环不足报错。
+
+**示例**：PIP 300 + TMC 200、密度 1.0 → 50.80 Å 立方盒（131078 Å³），
+8400 atoms / 8400 bonds / 14400 angles 校验全过。
+
+**踩坑（两处）**：
+1. mol2 无质量字段，parmed 读 mol2 的 `atom.mass` 恒为 0 → 密度盒子算出 L=0
+   （packmol.inp 里 inside box 全 0，报 "unable to put the molecules"）。
+   改为按 mol2 原子名推元素（antechamber 命名 = 元素+序号）查 ELEMENT_MASS。
+2. parmed 读 mol2 时把 Cl 的 `atomic_number` 错识别成 6（C）→ 元素列/质量把
+   3 个 Cl 全算成 C（TMC 质量 265.47 → 195.15）。`_element_symbol` 改为
+   **原子名优先**（不用 parmed atomic_number），packmol_layer 与 system_layer 两处
+   同步修（packmol 输入 xyz 元素列 + 合并 PDB 元素列）。
+
+**约束**：`density` 与 `inp_file` 互斥（自动盒子只对自动生成的 inp 有效；自定义 inp
+里写 density 关键字时盒子由 packmol 内部计算，data.lmp 盒边界无法对齐）。

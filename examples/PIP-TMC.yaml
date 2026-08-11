@@ -1,0 +1,27 @@
+# 体系示例：PIP（哌嗪）300 + TMC（均苯三甲酰氯）200 → 密度 1.0 g/cm³ 装盒
+# 运行：cd examples && python ../main.py PIP-TMC.yaml
+#
+# 盒子设计：packmol.density 自动算——不手写 box。
+#   L = (总质量 / 密度)^(1/3)
+#   总质量 = Σ(count × 分子量) / N_A = (300×86.14 + 200×265.48)/6.022e23 = 1.311e-19 g
+#   密度 1 g/cm³ = 1e-24 g/Å³ → V = 131078 Å³ → L ≈ 50.8 Å
+# 若装不下（packmol 报错/卡住）：调小 density（盒子变大）或调大 tolerance。
+name: PIP_TMC
+forcefield: gaff2
+charge_method: bcc
+net_charge: 0
+molecules:
+  - smiles: C1CNCCN1
+    name: PIP
+    count: 300
+    resname: PIP
+  - smiles: O=C(Cl)c1cc(C(=O)Cl)cc(C(=O)Cl)c1
+    name: TMC
+    count: 200
+    resname: TMC
+packmol:
+  density: 1.0        # 目标密度 g/cm³，自动算立方盒（替代手写 box）
+  tolerance: 2.0      # 分子间最小间距 Å（密度 1.0 的紧密盒子装不下时调小它，或调小 density）
+output: data.lmp
+workdir: work
+seed: 2026

@@ -137,10 +137,11 @@ def _pdb_atom_line(serial: int, name: str, resname: str, resseq: int,
 
 
 def _element_symbol(atom) -> str:
-    z = getattr(atom, 'atomic_number', 0)
-    if z and z > 0:
-        return ['', 'H', 'He', 'Li', 'Be', 'B', 'C', 'N', 'O', 'F', 'Ne',
-                'Na', 'Mg', 'Al', 'Si', 'P', 'S', 'Cl', 'Ar'][z]
+    """从原子名推元素符号（antechamber mol2 原子名 = 元素+序号，如 C1/Cl1/H1）。
+
+    不用 parmed atomic_number：读 mol2（无质量字段）时 parmed 会把 Cl 的
+    atomic_number 错识别成 6(C)，导致 PDB 元素列写成 C。
+    """
     name = atom.name
     if len(name) >= 2 and name[1].islower():
         return name[:2].capitalize()

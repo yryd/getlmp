@@ -15,7 +15,8 @@ from config import Config
 from export_layer import build_data, validate_export
 from export_reaxff import build_data_reaxff
 from molecule_layer import build_molecule
-from packmol_layer import (mol2_to_xyz, parse_inp_structures, parse_packed_xyz,
+from packmol_layer import (AVOGADRO, density_box, elements_mass, mol2_mass,
+                           mol2_to_xyz, parse_inp_structures, parse_packed_xyz,
                            run_packmol, sdf_to_xyz, write_inp)
 from system_layer import (build_system_multi, build_system_single, count_mol2_topo)
 from xyz_export import export_system_xyz
@@ -66,8 +67,18 @@ def run_pipeline(cfg: Config) -> dict:
         box = None
     else:
         # 2b. 体系层：packmol 装盒 + 合并 PDB + tleap loadpdb
-        print(f'== 体系层: packmol (preset={cfg.packmol.preset}, '
-              f'box={cfg.packmol.box}) ==')
+        # 密度模式：按 总质量/密度 自动算立方盒（写回 cfg，write_inp 与导出共用）
+        if cfg.packmol.density > 0:
+            masses = [mol2_mass(m['mol2']) for m in mols]
+            total_mass_g = sum(mc.count * mass
+                               for mc, mass in zip(cfg.molecules, masses)) / AVOGADRO
+            cfg.packmol.box = density_box(total_mass_g, cfg.packmol.density)
+            L = cfg.packmol.box[3]
+            print(f'== 体系层: packmol (preset={cfg.packmol.preset}, '
+                  f'密度 {cfg.packmol.density} g/cm³ → 盒 {L:.2f} Å 边长) ==')
+        else:
+            print(f'== 体系层: packmol (preset={cfg.packmol.preset}, '
+                  f'box={cfg.packmol.box}) ==')
         n_atoms = []
         for i, mc in enumerate(cfg.molecules):
             n_atoms.append(mol2_to_xyz(mols[i]['mol2'],
@@ -253,8 +264,18 @@ def _run_pipeline_reaxff(cfg: Config, workdir: str, mols: list, multi: bool) -> 
 
     if multi:
         # 多分子：packmol 装盒（坐标层面，无拓扑）
-        print(f'== 体系层: packmol (ReaxFF, preset={cfg.packmol.preset}, '
-              f'box={cfg.packmol.box}) ==')
+        # 密度模式：按 总质量/密度 自动算立方盒（元素组成估算质量）
+        if cfg.packmol.density > 0:
+            masses = [elements_mass(m['elements']) for m in mols]
+            total_mass_g = sum(mc.count * mass
+                               for mc, mass in zip(cfg.molecules, masses)) / AVOGADRO
+            cfg.packmol.box = density_box(total_mass_g, cfg.packmol.density)
+            L = cfg.packmol.box[3]
+            print(f'== 体系层: packmol (ReaxFF, preset={cfg.packmol.preset}, '
+                  f'密度 {cfg.packmol.density} g/cm³ → 盒 {L:.2f} Å 边长) ==')
+        else:
+            print(f'== 体系层: packmol (ReaxFF, preset={cfg.packmol.preset}, '
+                  f'box={cfg.packmol.box}) ==')
         n_atoms = []
         for i, mc in enumerate(cfg.molecules):
             n_atoms.append(sdf_to_xyz(mols[i]['sdf'],

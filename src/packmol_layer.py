@@ -44,18 +44,15 @@ def sdf_to_xyz(sdf: str, out_xyz: str) -> int:
 
 
 def _element_symbol(atom) -> str:
-    z = getattr(atom, 'atomic_number', 0)
-    if z and z > 0:
-        return _ELEM[z] if z < len(_ELEM) else atom.name[:1].upper()
-    # 兜底：从原子名推元素（antechamber mol2 原子名通常为 元素+序号）
+    """从原子名推元素符号（antechamber mol2 原子名 = 元素+序号，如 C1/Cl1/H1/C9）。
+
+    不用 parmed atomic_number：读 mol2（无质量字段）时 parmed 会把 Cl 的
+    atomic_number 错识别成 6(C)，导致元素列/密度盒子算错。
+    """
     name = atom.name
     if len(name) >= 2 and name[1].islower():
         return name[:2].capitalize()
     return name[0].upper()
-
-
-_ELEM = ['', 'H', 'He', 'Li', 'Be', 'B', 'C', 'N', 'O', 'F', 'Ne',
-         'Na', 'Mg', 'Al', 'Si', 'P', 'S', 'Cl', 'Ar']
 
 
 def write_inp(cfg: Config, struct_xyz: list[str], n_atoms: list[int],
@@ -65,6 +62,7 @@ def write_inp(cfg: Config, struct_xyz: list[str], n_atoms: list[int],
     xlo, ylo, zlo, xhi, yhi, zhi = pm.box
     lines = [
         f'tolerance {pm.tolerance:.2f}',
+        f'nloop0 {pm.nloop0:d}',
         f'seed {pm.seed}',
         'filetype xyz',
         'output packed.xyz',
@@ -80,6 +78,57 @@ def write_inp(cfg: Config, struct_xyz: list[str], n_atoms: list[int],
         ]
     with open(inp_path, 'w') as f:
         f.write('\n'.join(lines))
+
+
+AVOGADRO = 6.02214076e23
+# 相对原子质量（标准原子量，与 tleap mass 近似一致，仅用于密度盒子估算）
+ELEMENT_MASS = {
+    'H': 1.008, 'C': 12.011, 'N': 14.007, 'O': 15.999, 'F': 18.998,
+    'Na': 22.990, 'P': 30.974, 'S': 32.06, 'Cl': 35.45, 'K': 39.098,
+    'Ca': 40.078, 'Br': 79.904, 'I': 126.904,
+}
+
+
+def mol2_mass(mol2: str) -> float:
+    """从 mol2 读单分子摩尔质量（g/mol）——按元素符号查 ELEMENT_MASS。
+
+    注意不能用 parmed atom.mass：mol2 无质量字段，parmed 按 ResidueTemplate
+    读出的 mass 为 0（曾导致密度盒子算出 0）。
+    """
+    s = pmd.load_file(mol2)
+    total = 0.0
+    for a in s.atoms:
+        elem = _element_symbol(a)
+        m = ELEMENT_MASS.get(elem)
+        if m is None:
+            raise RuntimeError(f'密度盒子无法计算：mol2 中未知元素 {elem!r}'
+                               f'（ELEMENT_MASS 未收录，见 src/packmol_layer.py）')
+        total += m
+    return total
+
+
+def elements_mass(elements: list[str]) -> float:
+    """按元素组成估算摩尔质量（g/mol）——ReaxFF 分支用（无 mol2 质量表）。"""
+    total = 0.0
+    for e in elements:
+        m = ELEMENT_MASS.get(e)
+        if m is None:
+            raise RuntimeError(f'密度盒子无法计算：未知元素 {e!r}（ELEMENT_MASS 未收录）')
+        total += m
+    return total
+
+
+def density_box(total_mass_g: float, density: float) -> list:
+    """按 总质量(g)/密度(g/cm³) → 立方盒 [0,0,0,L,L,L]（Å）。
+
+    1 g/cm³ = 1e-24 g/Å³（1 cm³ = 1e24 Å³）。
+    与 packmol 的 density 关键字等价（packmol 默认立方盒）。
+    """
+    if density <= 0:
+        raise ValueError(f'density 需为正数，当前 {density}')
+    vol_a3 = total_mass_g / (density * 1e-24)
+    L = vol_a3 ** (1.0 / 3.0)
+    return [0.0, 0.0, 0.0, L, L, L]
 
 
 def parse_inp_structures(inp_path: str) -> list[tuple[str, int]]:
