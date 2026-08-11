@@ -26,9 +26,10 @@ python main.py input.yaml    # → data.lmp + work/check_report.txt
 - **单分子与多分子体系**：单分子自动建盒；多分子用 packmol 装盒，支持任意分子组成
 - **完整拓扑**：键/角/二面角/improper 参数由 antechamber + parmchk2 补齐，导出 atom_style full
 - **内置校验**：电荷守恒、原子数守恒、段计数、几何自检，跑完即出报告
-- **ESP 可视化导出**：单分子 RESP 自动产出 `{name}_esp.vtx.pdb`（密度 0.001 闭合
-  等值面，B 因子=ESP）与 `{name}_esp.cub`（Multiwfn 严格 QM ESP，Gaussian 引擎时），
-  VMD Beta 着色直接看图；QUICK 引擎回退点电荷近似 cube
+- **ESP 可视化导出**：单分子 RESP/RESP2 自动产出 iso/pt 两套产物
+  （`_others/electrostatic_potential/iso/{density.cub,esp.cub}` 与
+  `pt/{mol.pdb,vtx.pdb}`），统一 Multiwfn 导出（Gaussian .fch / QUICK .molden），
+  VMD 直接渲染：iso 法密度等值面+ESP 着色，pt 法 Beta 着色
 - **集群实测过**：生成的 data.lmp 已多次通过集群 LAMMPS `read_data` + `run 0` 实跑验收
 - **可配置**：力场/电荷/装盒参数全部走 yaml，改两行配置即可切换需求
 
@@ -159,21 +160,21 @@ molecules:
 # esp 段可调 ESP 导出（默认开启，仅单分子 RESP/RESP2 生效）：
 # esp:
 #   enabled: true   # 不需要 ESP 可视化时改为 false
-#   spacing: 0.3    # 网格间距 Å（0.2 更细、0.5 更快）
-#   buffer: 1.5     # 分子外扩范围 Å
+#   # spacing/buffer 已废弃（旧点电荷近似 cube 参数），Multiwfn 网格自动
 ```
 
 流程：SMILES → 3D → antechamber（bcc 类型占位）→ g16 单点（pop=MK ESP）
 → formchk → Multiwfn RESP 拟合 → 电荷写回 mol2 → tleap → data.lmp。
 
-单分子 RESP/RESP2 时自动多产出可视化文件（workdir 内）：
-- `{name}_esp.vtx.pdb`：Multiwfn 密度 0.001 闭合等值面，B 因子字段存 ESP
-  （kcal/mol），VMD 用 Beta 着色直接看图
-- `{name}_esp.cub`：Multiwfn 严格 QM ESP cube（电子云积分，非点电荷近似）
-- `{name}.fch`：Gaussian 格式波函数（Multiwfn/VMD 二次分析用）
+单分子 RESP/RESP2 时自动多产出可视化文件（`_others/electrostatic_potential/` 内）：
+- `iso/density.cub` + `iso/esp.cub`：iso 法——Multiwfn 严格 QM 电子密度与 ESP 网格
+  （同一网格，VMD 用 density 等值面 0.001 画表面 + esp 着色）
+- `pt/mol.pdb` + `pt/vtx.pdb`：pt 法——分子结构与密度 0.001 闭合等值面顶点
+  （B 因子字段存 ESP kcal/mol，VMD Beta 着色直接看图）
+- `{name}.fch` / `{name}.molden`：波函数归档（Gaussian / QUICK，二次分析用）
 
 RESP 亦可回退 QUICK 引擎（`qm.engine: quick`，HF/6-31G* + resp 两阶段拟合，
-输出 molden + 点电荷近似 cube），示例见 `examples/PIP.yaml`。
+Multiwfn 读 molden 产出同样的 iso/pt 两套产物），示例见 `examples/PIP.yaml`。
 
 ### 场景 3：ReaxFF 反应力场（坐标 + 元素，无键项，QEq 模拟中算）
 
@@ -231,7 +232,9 @@ packmol:
 | | `sqm.in/out/pdb` | AM1-BCC 半经验计算（仅 BCC/ABCG2） |
 | RESP 额外 | `{name}_quick.in/.out/.vdw` | QUICK 输入/日志/vdW 表面 ESP 点 |
 | | `_resp_tmp_{name}/` | resp 两阶段拟合中间目录 |
-| | `{name}_esp.cub` + `{name}.molden` | ESP 网格 + 波函数（可视化） |
+| | `_others/electrostatic_potential/iso/` | iso 法：density.cub + esp.cub（Multiwfn 严格 QM） |
+| | `_others/electrostatic_potential/pt/` | pt 法：mol.pdb + vtx.pdb（B 因子=ESP） |
+| | `{name}.fch` / `{name}.molden` | 波函数（可视化/二次分析） |
 | 噪音残留 | `ANTECHAMBER_*.AC`、`ATOMTYPE.INF` | antechamber 临时文件，可忽略/删除 |
 
 ---
@@ -283,7 +286,7 @@ src/
 ├── system_layer.py      # tleap 拓扑 ×N + 坐标 → prmtop
 ├── export_layer.py      # prmtop → data.lmp（atom_style full）
 ├── export_reaxff.py     # 坐标/元素 → data.lmp（atom_style charge）
-├── multiwfn.py          # Multiwfn RESP/RESP2 拟合 + ESP 可视化导出（Gaussian 引擎）
+├── multiwfn.py          # Multiwfn RESP/RESP2 拟合 + ESP 可视化导出（iso/pt, fch/molden）
 ├── check_lammps_data.py # 不依赖 LAMMPS 的格式自检
 └── prmtop_to_lammps.py  # Amber → LAMMPS 参数转换
 ```

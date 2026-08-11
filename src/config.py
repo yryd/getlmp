@@ -36,10 +36,17 @@ class PackmolCfg:
 
 @dataclass
 class EspCfg:
-    """ESP 可视化导出（单分子 RESP/RESP2 时默认生成 _esp.cub + vtx.pdb + 波函数）。"""
+    """ESP 可视化导出（单分子 RESP/RESP2 时默认生成 iso/pt 两套产物）。
+
+    产物位于 _others/electrostatic_potential/ 下：
+      iso/{density.cub, esp.cub}   iso 法（VMD: 密度等值面 + ESP 着色）
+      pt/{mol.pdb, vtx.pdb}        pt 法（分子结构 + ESP 曲面顶点，Beta 着色）
+    统一由 Multiwfn 导出（gaussian 用 .fch，quick 用 .molden）。
+    """
     enabled: bool = True     # 仅单分子 RESP/RESP2 生效
-    spacing: float = 0.3     # 网格间距 Å（0.2 更细、0.5 更快）
-    buffer: float = 1.5      # 分子外扩 Å（网格覆盖范围）
+    # 以下字段为旧点电荷近似 cube（esp_export）参数，已废弃保留兼容：
+    spacing: float = 0.3     # （废弃）网格间距 Å，Multiwfn 网格自动，不再使用
+    buffer: float = 1.5      # （废弃）分子外扩 Å，Multiwfn 网格自动，不再使用
 
 
 @dataclass

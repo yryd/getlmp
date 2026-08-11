@@ -96,17 +96,19 @@ export PATH=$g16root:$PATH
 - 苯 RESP(G16)：12 原子，6C≈-0.109±0.002、6H≈+0.109±0.001（近似等价，见上），
   sum=0，校验通过。
 
-**ESP 可视化（Gaussian 引擎，单分子 RESP 时）**：
-- `{name}_esp.vtx.pdb`：Multiwfn 密度 0.001 闭合等值面，B 因子字段=ESP(kcal/mol)，
-  VMD Beta 着色直接看图（ISO 曲面 + Color by Beta）。
-- `{name}_esp.cub`：Multiwfn 严格 QM ESP（电子云积分，非点电荷近似），
-  spacing=0.3 Å、buffer=1.5 Å（esp 段可调）。
-- `{name}.fch`：Gaussian 波函数归档（Multiwfn/VMD 二次分析）。
+**ESP 可视化（单分子 RESP/RESP2，统一 Multiwfn）**：产物在
+`_others/electrostatic_potential/` 下，gaussian 引擎用 `.fch`、quick 引擎用 `.molden`：
+- `iso/density.cub` + `iso/esp.cub`：iso 法——Multiwfn 严格 QM 电子密度与 ESP 网格
+  （两次运行同一表面格点空间，网格完全一致，VMD density 等值面 0.001 + esp 着色）。
+- `pt/mol.pdb` + `pt/vtx.pdb`：pt 法——分子结构与密度 0.001 闭合等值面顶点，
+  B 因子字段=ESP(kcal/mol)，VMD Beta 着色直接看图。
+- `{name}.fch`（或 `{name}.molden`）：波函数归档（二次分析）。
+- 旧点电荷近似粗 cube（esp_export.py）已废弃删除；esp.spacing/buffer 保留但不再生效。
 
 ### 4.2 QUICK 回退路径（`qm.engine: quick`，2026-08-10 验收）
 
 链路：`mol2 → QUICK(HF/6-31G* ESP on vdW 表面) → 自建 .esp → resp 两阶段拟合 → 写回 mol2`。
-2026-08-11 回归测试零破坏（乙醇 quick_resp 全链路校验通过，ESP 回退点电荷近似 cube）。
+2026-08-11 回归测试零破坏（乙醇 quick_resp 全链路校验通过）。同日 ESP 可视化重构：iso/pt 两套产物（_others/electrostatic_potential/），统一 Multiwfn 导出，QUICK 亦用 molden 产出同样结构，点电荷近似 cube 废弃。
 
 **三个坑**（均为实测踩过，代码注释已同步）：
 

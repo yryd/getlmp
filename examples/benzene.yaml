@@ -1,0 +1,16 @@
+# 苯 RESP（Gaussian + Multiwfn 回归）
+name: benzene_resp
+forcefield: gaff2
+charge_method: resp
+net_charge: 0
+qm:
+  engine: gaussian
+  method: b3lyp
+  basis: def2TZVP
+molecules:
+  - smiles: c1ccccc1
+    name: benzene
+    count: 1
+output: data.lmp
+workdir: work
+seed: 2026

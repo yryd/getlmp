@@ -53,7 +53,7 @@ organize_output: true
 
 | 键 | 类型 | 默认 | 说明 |
 |----|------|------|------|
-| `name` | str | `system` | 体系名。用于主产物命名（`{name}_esp.cub`、`{name}_esp.vtx.pdb`、检查报告标题等） |
+| `name` | str | `system` | 体系名。用于主产物命名（`{name}.fch`/`{name}.chg`、检查报告标题等） |
 | `forcefield` | str | `gaff2` | 力场：`gaff2` / `gaff` / `reaxff` |
 | `charge_method` | str | `bcc` | 电荷方法：`bcc`(AM1-BCC) / `abcg2` / `resp` / `resp2` / `none`（`reaxff` 时必须为 `none`） |
 | `net_charge` | int | `0` | 分子净电荷（传给 antechamber `-nc` 与 g16 输入；多分子体系按每个分子拷贝计） |
@@ -140,18 +140,18 @@ qm:
 ```yaml
 esp:
   enabled: true    # 不需要可视化时 false（不影响 RESP 电荷拟合本身）
-  spacing: 0.3     # 网格间距 Å（0.2 更细更慢、0.5 更快）
-  buffer: 1.5      # 分子外扩 Å（网格覆盖范围）
+  # spacing / buffer 已废弃（旧点电荷近似 cube 参数，Multiwfn 网格自动）
 ```
 
 | 键 | 类型 | 默认 | 说明 |
 |----|------|------|------|
 | `enabled` | bool | `true` | 是否导出 ESP 可视化产物。`false` 只关可视化，**不影响电荷拟合** |
-| `spacing` | float | `0.3` | ESP cube 网格间距（Å）。`0.2` 更精细（cube 更大更慢），`0.5` 更快 |
-| `buffer` | float | `1.5` | 网格在分子外扩的范围（Å），决定 cube 覆盖体积 |
+| `spacing` | float | `0.3` | （废弃）旧点电荷 cube 网格间距。Multiwfn 网格自动，不再使用 |
+| `buffer` | float | `1.5` | （废弃）旧点电荷 cube 分子外扩。Multiwfn 网格自动，不再使用 |
 
-**产物（engine=gaussian 时）**：`{name}_esp.vtx.pdb`（闭合曲面顶点，B 因子=ESP kcal/mol，VMD Beta 着色）、`{name}_esp.cub`（严格 QM ESP，a.u.）、`{name}.fch`（波函数）。
-**engine=quick 时**：仅 `{name}_esp.cub`（点电荷库仑近似，a.u.）。
+**产物**（统一 Multiwfn 导出，engine=gaussian 用 `.fch`、quick 用 `.molden`），位于 `_others/electrostatic_potential/`：
+- `iso/density.cub` + `iso/esp.cub`：iso 法——严格 QM 电子密度与 ESP 网格（同一网格，VMD density 等值面 0.001 + esp 着色）。
+- `pt/mol.pdb` + `pt/vtx.pdb`：pt 法——分子结构与闭合等值面顶点（B 因子=ESP kcal/mol，VMD Beta 着色）。
 
 ---
 
