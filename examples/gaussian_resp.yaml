@@ -12,7 +12,7 @@ qm:
   # solvent: water          # 空=气相；RESP2 需要溶剂
   # resp2: false            # RESP2 开关（需 solvent 非空）
   # delta: 0.5              # RESP2 δ
-  # multiwfn_path: ''       # 空=自动探测（~/packages/soft/multiwfn/）
+  # multiwfn_path: ''       # 空=自动探测（按 PATH 找 Multiwfn_noGUI，见 docs/install.md）
 molecules:
   - smiles: CCO
     name: ethanol

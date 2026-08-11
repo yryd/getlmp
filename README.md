@@ -109,8 +109,9 @@ OVITO/VMD 可视化或传给其他工具（如 Multiwfn）。
 
 - `data.lmp` — LAMMPS 可直接 `read_data` 的 data 文件（文件名 = yaml `output:`，默认 `data.lmp`）
 - `work/` — 工作目录；`organize_output: true`（默认）时根目录只保留
-  `output` 的 lmp + 各分子 `{name}.mol2` + `system.xyz`，其余中间文件（检查报告、prmtop、
-  sdf、frcmod、esp.cub、molden、ANTECHAMBER_* 等）自动移入 `work/_others/`；
+  `output` 的 lmp + 各分子 `{name}.mol2` + `system.xyz` + `check_report.txt` +
+  波函数（`*.fch`/`*.molden`/`*.chg`），其余中间文件（prmtop、sdf、frcmod、
+  esp.cub、ANTECHAMBER_* 等）自动移入 `work/_others/`；
   同名文件默认直接覆盖只留最新一份，如需保留历史多份可设 `organize_backup: true`
 
 ---
@@ -152,7 +153,7 @@ qm:
   # solvent: water         # 空=气相；RESP2 需要溶剂（PCM 单点）
   # resp2: true            # RESP2 开关（需 solvent 非空）
   # delta: 0.5             # RESP2 δ 混合系数
-  # multiwfn_path: ''      # 空=自动探测（~/packages/soft/multiwfn/）
+  # multiwfn_path: ''      # 空=自动探测（按 PATH 找 Multiwfn_noGUI，见 docs/install.md）
 molecules:
   - smiles: c1ccccc1
     name: benzene
@@ -246,9 +247,8 @@ packmol:
 |------|------|
 | [`examples/`](examples/) | 可直接运行的示例配置（甲烷/乙醇单体 + 混合体系 + RESP/RESP2 + QUICK 回退） |
 | [`docs/yaml_config.md`](docs/yaml_config.md) | **YAML 配置参考**：全部选项、类型、默认值、校验规则、组合约束 |
-| [`docs/dev_notes.md`](docs/dev_notes.md) | 开发文档：规划与需求矩阵、环境搭建、技术坑、验收结论、后续方向 |
+| [`docs/dev_notes.md`](docs/dev_notes.md) | 开发文档：需求矩阵与阶段规划（GAFF2/ReaxFF/AM1-BCC/RESP/RESP2 完成）、环境搭建、技术坑、验收结论、后续方向；历史 plan 文档已完成并删除（变更记录见 git log） |
 | [`docs/install.md`](docs/install.md) | **环境安装与配置**：PATH 约定、G16/Multiwfn/QUICK 安装、.bashrc 模板、check_env 自检 |
-| `docs/plan_*_integration.md` / `plan_*_validation.md` | 历史计划与分阶段验收记录（已完成，仅存档） |
 
 ---
 
