@@ -56,22 +56,21 @@ rdkit 2026.03.1、parmed 26.0、numpy 2.4.6、python 3.12。
 链路：`mol2 → g16 单点(B3LYP/def2TZVP, pop=MK ESP) → formchk → Multiwfn RESP/RESP2 拟合
 → 电荷写回 mol2 → tleap → data.lmp`。
 
-**环境**（G16 非交互 shell 需要手动 source 环境变量，已封装 `scripts/g16env.sh`）：
+**环境**（2026-08-11 起：安装方法统一收敛到 [`docs/install.md`](install.md)；
+G16/Multiwfn 的 PATH 与环境变量写在 `~/.bashrc`，代码只按 PATH 找，不再封装脚本）：
 
 ```bash
-source /home/yryd/packages/getlmp/scripts/g16env.sh   # 或自己 export 下面前 5 行
-```
-
-```bash
-export g16root=/home/yryd/packages/soft/g16/g16
+# ~/.bashrc 需包含（路径按实际安装位置修改）：
+export g16root=$HOME/packages/soft/g16/g16
 export GAUSS_EXEDIR=$g16root/bsd:$g16root/utility:$g16root
-export GAUSS_SCRDIR=/home/yryd/packages/soft/scratch
+export GAUSS_SCRDIR=$HOME/packages/soft/scratch
 export LD_LIBRARY_PATH=$g16root/bsd:$g16root
 export PATH=$g16root:$PATH
+export PATH=$HOME/packages/soft/multiwfn/Multiwfn_2026.7.15_bin_Linux_noGUI:$PATH
+export QUICK_BASIS=$CONDA_PREFIX/AmberTools/src/quick/basis
 ```
 
-- Multiwfn 二进制：`/home/yryd/packages/soft/multiwfn/Multiwfn_2026.7.15_bin_Linux_noGUI/Multiwfn_noGUI`
-  （`multiwfn.py` 自动探测该路径，亦可 `qm.multiwfn_path` 覆盖）。
+- Multiwfn 二进制加入 PATH 后由 `shutil.which` 探测（亦可 `qm.multiwfn_path` 覆盖）。
 - RESP 拟合：`7→18→1`（标准两阶段）+ IOp(6/33=2,6/42=6) MK 网格；
   RESP2：`7→18→3→1`（两阶段 RESP2，δ=0.5，电荷 qm.delta 可调）。
 - **Multiwfn 标准 RESP 流程不自动施加原子等价约束**（日志明确 "No atom equivalence

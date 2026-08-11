@@ -122,14 +122,14 @@ qm:
 | 键 | 类型 | 默认 | 说明 |
 |----|------|------|------|
 | `engine` | str | `gaussian` | `gaussian`：G16 单点（`pop=MK IOp(6/33=2,6/42=6)`）+ Multiwfn 拟合，531 路线主路径；`quick`：QUICK HF/6-31G* + resp 两阶段，旧路径回退（免费、不依赖 G16，但**无 RESP2、无隐式溶剂**） |
-| `g16root` | str | `''` | G16 安装根目录。空=自动探测（环境变量/默认路径 `/home/yryd/packages/soft/g16/g16`）。非交互 shell 下代码会自动 source `scripts/g16env.sh`，通常无需手动配 |
+| `g16root` | str | `''` | G16 安装根目录。**一般留空**：代码按 PATH 找 `g16`（见 `docs/install.md`），只需 G16 已在 PATH 中。仅非常规安装位置（不在 PATH）时才显式指定 |
 | `method` | str | `b3lyp` | 泛函/方法名，G16 route 直接使用。531 路线推荐 `b3lyp`（代码自动补 `em=GD3BJ` 色散校正） |
 | `basis` | str | `def2TZVP` | 基组。注意 **G16 不认带连字符的 `def2-TZVP`**，代码会自动把 `def2-` 转 `def2`（兼容文献写法）。阴离子体系可配 `ma-def2TZVP` 等 |
 | `opt` | bool | `false` | `true` 时在 g16 route 加 `opt`，**先几何优化再算 ESP**；默认 `false`=单点（几何=RDKit ETKDG 构象→mol2，不经 QM 优化）。RESP 惯例为单点，一般保持默认 |
 | `solvent` | str | `''` | 隐式溶剂名（G16 SMD 关键词，如 `water`/`ethanol`）。非空时 route 加 `scrf=(smd,solvent=xxx)`。**RESP2 必需**（溶剂单点） |
 | `resp2` | bool | `false` | RESP2 开关（与 `charge_method: resp2` 配套，见 §6 校验） |
 | `delta` | float | `0.5` | RESP2 混合系数：`q = (1-δ)·q_gas + δ·q_solv`。取值范围 [0,1]，越接近 1 越偏向溶剂化 |
-| `multiwfn_path` | str | `''` | Multiwfn_noGUI 可执行文件路径。空=自动探测（PATH → `~/packages/soft/multiwfn/` 及 `/home/yryd/packages/soft/multiwfn/` 下 glob） |
+| `multiwfn_path` | str | `''` | Multiwfn_noGUI 可执行文件路径。**一般留空**：代码按 PATH 找（见 `docs/install.md`）。仅不在 PATH 时才显式指定 |
 
 ---
 

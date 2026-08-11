@@ -235,36 +235,14 @@ def _count_frcmod_lines(path: str) -> int:
 #   5. resp 的 -e .esp 格式：ESP 在前、坐标在后、单位 Bohr（原子坐标 + MEP 点都要 Bohr）。
 BOHR = 1.889726124626
 
-_DEFAULT_G16_CANDS = [
-    os.path.expanduser('~/packages/soft/g16/g16'),
-    '/home/yryd/packages/soft/g16/g16',
-]
-_DEFAULT_G16_SCRATCH = os.path.expanduser('~/packages/soft/scratch')
-
-
-def _find_g16root(qm) -> str:
-    """探测 g16 安装目录（含 g16 可执行）。顺序：qm.g16root → env → 默认路径。"""
-    cands = [qm.g16root or '', os.environ.get('g16root', '')] + _DEFAULT_G16_CANDS
-    for c in cands:
-        if c and os.path.isfile(os.path.join(c, 'g16')):
-            return c
+def _find_g16() -> str:
+    """按 PATH 约定探测 g16 可执行（GAUSS_* 环境由 .bashrc 提供，见 docs/install.md）。"""
+    p = shutil.which('g16')
+    if p:
+        return p
     raise RuntimeError(
-        '找不到 g16 安装目录。请设置 qm.g16root（如 /home/yryd/packages/soft/g16/g16）'
-        '或安装到 ~/packages/soft/g16/g16')
-
-
-def _g16_env(qm) -> dict:
-    """构建 g16 子进程环境（对应 scripts/g16env.sh，仅 subprocess 内注入）。"""
-    root = _find_g16root(qm)
-    env = dict(os.environ)
-    env.update({
-        'g16root': root,
-        'GAUSS_EXEDIR': f'{root}/bsd:{root}/utility:{root}',
-        'GAUSS_SCRDIR': env.get('GAUSS_SCRDIR', _DEFAULT_G16_SCRATCH),
-        'LD_LIBRARY_PATH': f'{root}/bsd:{root}',
-        'PATH': f'{root}:' + env.get('PATH', ''),
-    })
-    return env
+        'PATH 中找不到 g16（Gaussian 未安装或未加入 PATH）。'
+        '安装与配置见 docs/install.md；也可用 qm.engine: quick 走 QUICK 回退路径')
 
 
 def _mol2_atoms(mol2: str) -> list[list]:
@@ -291,19 +269,15 @@ def _mol2_atoms(mol2: str) -> list[list]:
     return atoms
 
 
-def _find_quick_basis() -> str:
-    """探测 QUICK_BASIS 目录（conda 版 ambertools 自带 basis 数据）。"""
-    conda = os.environ.get('CONDA_PREFIX', '')
-    cand = [
-        os.path.join(conda, 'AmberTools', 'src', 'quick', 'basis'),
-        '/home/yryd/packages/miniconda3/envs/getlmp/AmberTools/src/quick/basis',
-    ]
-    for p in cand:
-        if p and os.path.isdir(p) and os.path.exists(os.path.join(p, '6-31G.BAS')):
-            return p
+def _require_quick_basis() -> str:
+    """读取约定环境变量 QUICK_BASIS（指向含 6-31G.BAS 的目录，见 docs/install.md）。"""
+    b = os.environ.get('QUICK_BASIS', '')
+    if b and os.path.isdir(b) and os.path.exists(os.path.join(b, '6-31G.BAS')):
+        return b
     raise RuntimeError(
-        '找不到 QUICK basis 目录（QUICK_BASIS）。请安装 ambertools（含 AmberTools/src/quick/basis）'
-        '或在 yaml 配置 quick_basis 指定路径')
+        '环境变量 QUICK_BASIS 未设置或无效（应指向含 6-31G.BAS 的目录）。'
+        '安装与配置见 docs/install.md（例如 '
+        'export QUICK_BASIS=$CONDA_PREFIX/AmberTools/src/quick/basis）')
 
 
 def _write_quick_input(path: str, title: str, atoms: list[list], net_charge: int,
@@ -367,8 +341,8 @@ def _write_gaussian_input(path: str, title: str, atoms: list[list],
 
 def _run_gaussian(gjf: str, workdir: str, qm) -> str:
     """运行 g16 单点，返回 log 路径；检查 Normal termination。"""
+    _find_g16()   # PATH 探测；GAUSS_* 环境由 .bashrc 提供，子进程直接继承
     log = os.path.splitext(gjf)[0] + '.log'
-    env = _g16_env(qm)
     print(f'  [run] g16 {os.path.basename(gjf)} '
           f'({qm.method}/{qm.basis}'
           + (f' + {qm.solvent}' if qm.solvent else '')
@@ -376,7 +350,7 @@ def _run_gaussian(gjf: str, workdir: str, qm) -> str:
     try:
         r = subprocess.run(['g16', os.path.basename(gjf), os.path.basename(log)],
                            cwd=workdir, capture_output=True, text=True,
-                           env=env, timeout=3600)
+                           timeout=3600)
     except subprocess.TimeoutExpired:
         raise RuntimeError(f'g16 超时（>1h）: {gjf}')
     log_full = os.path.join(workdir, log)
@@ -395,12 +369,13 @@ def _run_gaussian(gjf: str, workdir: str, qm) -> str:
 
 def _run_formchk(chk: str, fch: str, workdir: str, qm) -> str:
     """formchk: .chk → .fch（格式波函数，Multiwfn 可读）。"""
-    root = _find_g16root(qm)
-    env = _g16_env(qm)
+    fc = shutil.which('formchk')
+    if not fc:
+        raise RuntimeError('PATH 中找不到 formchk（Gaussian 未安装或未加入 PATH）。'
+                           '安装与配置见 docs/install.md')
     r = subprocess.run(
-        [os.path.join(root, 'formchk'), os.path.basename(chk),
-         os.path.basename(fch)],
-        cwd=workdir, capture_output=True, text=True, env=env, timeout=300)
+        [fc, os.path.basename(chk), os.path.basename(fch)],
+        cwd=workdir, capture_output=True, text=True, timeout=300)
     if not os.path.exists(os.path.join(workdir, fch)):
         raise RuntimeError(f'formchk 失败\n--- stdout ---\n{r.stdout[-800:]}\n'
                            f'--- stderr ---\n{r.stderr[-800:]}')
@@ -511,12 +486,11 @@ def _build_resp_charges_quick(mc: MoleculeCfg, workdir: str, base: str,
 
     # 1. QUICK 输入 + 运行
     _write_quick_input(quick_in, mc.name, atoms, net_charge, esp_enabled)
-    basis = _find_quick_basis()
-    env = dict(os.environ, QUICK_BASIS=basis)
+    basis = _require_quick_basis()
     print(f'  [run] quick {os.path.basename(quick_in)} (HF/6-31G* ESP, '
           f'QUICK_BASIS={basis})')
     r = subprocess.run(['quick', os.path.basename(quick_in)], cwd=workdir,
-                       capture_output=True, text=True, env=env)
+                       capture_output=True, text=True)
     if not os.path.exists(quick_out) or 'Normal Termination' not in open(quick_out).read():
         raise RuntimeError(f'QUICK 运行失败\n--- stdout ---\n{r.stdout[-1500:]}\n'
                            f'--- stderr ---\n{r.stderr[-1500:]}')

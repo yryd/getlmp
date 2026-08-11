@@ -45,7 +45,8 @@ RESP2 不支持（antechamber 无 resp2 方法、QUICK 无 PCM）；ESP 可视�
 
 1. 解压：`tar xjf /mnt/d/.../G16-C01-AVX.tbJ -C /home/yryd/packages/soft/`
    （`.tbJ` 即 tbz；若损坏换 A03-AVX2）
-2. 环境变量脚本 `scripts/g16env.sh`（供代码 subprocess 复用，不污染全局）：
+2. 环境变量脚本 ~~`scripts/g16env.sh`~~（2026-08-11 废弃：改由 `~/.bashrc`
+   提供，代码按 PATH 找，见 `docs/install.md`）：
    ```bash
    export g16root=/home/yryd/packages/soft
    export GAUSS_EXEDIR=$g16root/g16/bsd:$g16root/g16/utility:$g16root/g16
@@ -95,7 +96,8 @@ class QmCfg:
      （`%nprocshared=8`、`%mem=4GB`、`# B3LYP em=GD3BJ def2-TZVP`
      + `scrf=solvent=xxx`（若溶剂）+ `pop=MK` 或 `iop(6/33=2)` 输出 ESP 点
      + `charge multiplicity`，坐标来自 mol2，不重排原子序）
-  2. `_run_gaussian()`：subprocess 带 g16env 环境，检查 `Normal termination`
+  2. `_run_gaussian()`：PATH 探测 g16 + subprocess 直接继承 .bashrc 环境，
+     检查 `Normal termination`
   3. `_run_formchk()`：.chk → .fch
   4. `_multiwfn_resp()`：Multiwfn 7→18→1（标准两步 RESP），解析电荷
 - **`engine == 'quick'`（旧路径保留）**：现有 QUICK 代码原样作为 fallback。
@@ -157,7 +159,7 @@ class QmCfg:
 | **Gaussian license 缺失/无效**（最大） | g16 无法运行 | `qm: quick` + Multiwfn（Multiwfn 读 molden 拟合 RESP）仍可交付；或请用户提供 license |
 | G16 C01 AVX 包损坏/WSL 不兼容 | 装不上 | 换 A03-AVX2 / SSE42 版 |
 | Multiwfn noGUI 缺动态库 | 跑不起来 | 桌面源码编译（gfortran + noGUI）；或改用 bin_Win64 + wine（不推荐） |
-| 环境变量污染 | 影响其他软件 | 统一走 `scripts/g16env.sh`，仅 subprocess 内注入 |
+| 环境变量污染 | 影响其他软件 | 统一走 `~/.bashrc` 约定 + 文档说明（docs/install.md），代码不注入 |
 | 内存不足（大分子） | g16 OOM | 小分子（<50 原子）11G 内存足够；大分子提示降低核数/基组 |
 
 ## 10. 交付物清单

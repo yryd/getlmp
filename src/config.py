@@ -57,7 +57,7 @@ class QmCfg:
     engine=quick（旧路径保留）：QUICK HF/6-31G* + resp 两阶段拟合。
     """
     engine: str = 'gaussian'   # gaussian / quick
-    g16root: str = ''          # 空=自动探测（env/默认路径）
+    g16root: str = ''          # 显式 G16 根目录覆盖（一般留空，PATH 已含 g16 即可）
     method: str = 'b3lyp'      # 531 推荐 B3LYP-D3(BJ)
     basis: str = 'def2TZVP'    # G16 命名（def2-TZVP 连字符写法会自动转）
     opt: bool = False          # 是否先几何优化（默认单点）

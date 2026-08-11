@@ -18,19 +18,10 @@ Multiwfn 交互式输入用 stdin 管道喂入；退出时可能报 Fortran I/O 
 """
 from __future__ import annotations
 
-import glob
 import os
 import shutil
 import subprocess
 import sys
-
-# 默认候选路径（config 未指定时按序探测）
-DEFAULT_CANDS = [
-    os.path.expanduser('~/packages/soft/multiwfn/Multiwfn_noGUI'),
-    os.path.expanduser('~/packages/soft/multiwfn/*/Multiwfn_noGUI'),
-    '/home/yryd/packages/soft/multiwfn/Multiwfn_noGUI',
-    '/home/yryd/packages/soft/multiwfn/*/Multiwfn_noGUI',
-]
 
 # Multiwfn RESP 标准输入（官方 calcRESP.sh）
 _RESP_INPUT = '7\n18\n1\ny\n0\n0\nq\n'
@@ -43,28 +34,22 @@ _ESP_DENSITY_CUBE_INPUT = '12\n2\n11\n0\n13\n-1\n0\nq\n'
 
 
 def find_multiwfn(cfg_path: str = '') -> str:
-    """探测 Multiwfn_noGUI 可执行路径。
+    """探测 Multiwfn_noGUI 可执行路径（PATH 约定，见 docs/install.md）。
 
-    顺序：config 显式路径 → PATH → 默认候选（含 glob 通配）。
+    顺序：config 显式路径（qm.multiwfn_path）→ PATH。
     找不到时报错并给出提示。
     """
     if cfg_path:
         if os.path.isfile(cfg_path):
             return cfg_path
         raise FileNotFoundError(f'multiwfn_path 不存在: {cfg_path}')
-    # PATH
     for name in ('Multiwfn_noGUI', 'multiwfn'):
         p = shutil.which(name)
         if p:
             return p
-    # 默认候选（含 glob）
-    for cand in DEFAULT_CANDS:
-        hits = glob.glob(cand)
-        if hits and os.path.isfile(hits[0]):
-            return hits[0]
     raise FileNotFoundError(
-        '找不到 Multiwfn_noGUI。请在 yaml 配置 qm.multiwfn_path 指定路径，'
-        '或安装到 ~/packages/soft/multiwfn/ 下')
+        'PATH 中找不到 Multiwfn_noGUI（未安装或未加入 PATH）。'
+        '安装与配置见 docs/install.md；也可在 yaml 用 qm.multiwfn_path 显式指定')
 
 
 def _run_multiwfn(mwfn: str, wfn_file: str, stdin_text: str,

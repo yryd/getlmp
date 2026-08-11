@@ -43,15 +43,15 @@ cd /home/yryd/packages/getlmp && git add docs/plan_gaussian_multiwfn_integration
 ### 1.4 运行验证 ✅
 最小 gjf：水分子 HF/6-31G* 单点（`%nprocshared=8 %mem=4GB`）：
 ```bash
-source scripts/g16env.sh && g16 h2o_test.gjf h2o_test.log
+g16 h2o_test.gjf h2o_test.log    # 需先按 docs/install.md 把 G16 加入 PATH
 ```
 - 输出：`Normal termination` 出现 1 次
 - 能量：`SCF Done: E(RHF) = -76.0105049953 A.U.`（与 HF/6-31G* 标准值吻合）
 - `formchk h2o_test.chk h2o_test.fch` → 生成 95 KB .fch ✅
 
 ### 1.5 产物
-- `scripts/g16env.sh`：环境变量脚本（g16root=/home/yryd/packages/soft/g16/g16，
-  GAUSS_EXEDIR/SCRDIR/LD_LIBRARY_PATH/PATH），subprocess 复用
+- ~~`scripts/g16env.sh`~~：环境变量脚本（2026-08-11 已删除，改由 `~/.bashrc`
+  提供 + `docs/install.md` 说明；代码按 PATH 找 g16）
 
 ### 1.6 备注
 - 测试文件：`/home/yryd/packages/soft/scratch/{h2o_test.gjf,h2o_test.log,h2o_test.chk,h2o_test.fch}`
@@ -74,7 +74,7 @@ source scripts/g16env.sh && g16 h2o_test.gjf h2o_test.log
 | `src/molecule_layer.py` | `_build_resp_charges` 双引擎分派（gaussian 默认 / quick 回退）；RESP2 双单点（gas + solvent PCM） |
 | `src/config.py` | 新增 `qm:` 段（engine/method/basis/solvent/resp2/delta/multiwfn_path）+ `esp:` 段 |
 | `src/pipeline.py` | 波函数归档 + ESP 导出编排（iso/pt 两套产物，统一 Multiwfn：gaussian → .fch、quick → .molden） |
-| `scripts/g16env.sh` | G16 环境变量封装（非交互 shell） |
+| ~~`scripts/g16env.sh`~~ | G16 环境变量封装（2026-08-11 废弃，改 .bashrc + docs/install.md） |
 | examples | `gaussian_resp.yaml` / `resp2.yaml`；PIP.yaml 显式 `qm.engine: quick` |
 
 **G16 链路三个坑**（详见 dev_notes 4.1）：

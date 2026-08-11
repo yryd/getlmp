@@ -254,8 +254,9 @@ packmol:
 **Q: 支持哪些力场和电荷？**
 GAFF2/GAFF + AM1-BCC（默认）、RESP、RESP2、ABCG2；ReaxFF（QEq 电荷模拟中算）。
 RESP/RESP2 的 QM 引擎默认 Gaussian 16（`qm.engine: gaussian`，需 WSL 已装
-G16 与 Multiwfn，见 `scripts/g16env.sh`）；未装时可回退 `qm.engine: quick`
-（QUICK 免费，但无 RESP2、无隐式溶剂）。
+G16 与 Multiwfn，安装与 PATH 配置见 [`docs/install.md`](docs/install.md)）；
+未装时可回退 `qm.engine: quick`（QUICK 免费，但无 RESP2、无隐式溶剂）。
+安装好环境后可用 `python check_env.py` 自检。
 
 **Q: 多分子怎么装盒？**
 `count > 1` 自动启用 packmol（需在 `packmol.box` 给出盒尺寸）。
@@ -288,6 +289,7 @@ src/
 ├── export_reaxff.py     # 坐标/元素 → data.lmp（atom_style charge）
 ├── multiwfn.py          # Multiwfn RESP/RESP2 拟合 + ESP 可视化导出（iso/pt, fch/molden）
 ├── check_lammps_data.py # 不依赖 LAMMPS 的格式自检
+├── check_env.py         # 环境自检（库/命令/环境变量，见 docs/install.md）
 └── prmtop_to_lammps.py  # Amber → LAMMPS 参数转换
 ```
 
