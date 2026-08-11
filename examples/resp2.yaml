@@ -1,5 +1,6 @@
 # RESP2 电荷（Gaussian 气相 + water PCM 两个单点，Multiwfn 拟合 δ 混合）
 # 运行：cd examples && python ../main.py resp2.yaml
+# 注意：产物在 examples/work/（临时目录，跑完可删）
 name: resp2_ethanol
 forcefield: gaff2
 charge_method: resp2
@@ -7,7 +8,7 @@ net_charge: 0
 qm:
   engine: gaussian
   method: b3lyp
-  basis: def2-TZVP
+  basis: def2TZVP            # G16 命名（文献写法 def2-TZVP 也会自动兼容）
   solvent: water             # RESP2 必需：溶剂（PCM 单点）
   resp2: true                # 必需：开启 RESP2
   delta: 0.5                 # δ 混合系数（默认 0.5）

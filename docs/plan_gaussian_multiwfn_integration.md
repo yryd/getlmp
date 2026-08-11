@@ -1,6 +1,7 @@
 # 计划：集成 Gaussian 16 + Multiwfn 到 getlmp
 
-> 状态：规划中（2026-08-10）
+> 状态：✅ 已完成（2026-08-11，提交 b7cf6d4）
+> 分阶段执行记录见 `plan_gaussian_multiwfn_validation.md`；结论与坑归档于 `dev_notes.md` 4.1 节
 > 依据：http://sobereva.com/531（RESP2 思想与 Multiwfn 计算）、http://sobereva.com/441（RESP 原理）
 > 执行者：换上下文后的 MDToolAgent，按本计划逐步实现
 

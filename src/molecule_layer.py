@@ -99,7 +99,7 @@ def build_molecule(cfg: Config, mc: MoleculeCfg, workdir: str) -> dict:
             '-c', 'bcc', '-at', cfg.forcefield,
             '-nc', str(cfg.net_charge), '-rn', resname,
         ], workdir, 'antechamber(bcc 类型占位)')
-        print(f'  antechamber(bcc) → mol2 类型就绪（电荷待 QM 拟合覆盖）')
+        print('  antechamber(bcc) → mol2 类型就绪（电荷待 QM 拟合覆盖）')
         if cfg.charge_method == 'resp2':
             charges = _build_resp2_charges(mc, workdir, base, mol2,
                                            cfg.net_charge, cfg.qm)
@@ -504,7 +504,6 @@ def _build_resp_charges_quick(mc: MoleculeCfg, workdir: str, base: str,
                               mol2: str, net_charge: int,
                               esp_enabled: bool = False) -> list[float]:
     """RESP 电荷拟合（QUICK ESP + resp 两阶段，旧路径），返回电荷列表。"""
-    sdf = base + '.sdf'
     atoms = _mol2_atoms(mol2)
     quick_in = base + '_quick.in'
     quick_out = base + '_quick.out'
@@ -547,7 +546,6 @@ def _build_resp_charges_quick(mc: MoleculeCfg, workdir: str, base: str,
     esp_fixed = os.path.join(tmp, 'ANTECHAMBER.ESP.fixed')
     n_esp = _build_esp_file(esp_fixed, atoms, quick_vdw)
     print(f'  RESP 拟合: {len(atoms)} atoms, {n_esp} ESP 点 (resp 两阶段)')
-    qout = os.path.join(tmp, 'qout')
     qout2 = os.path.join(tmp, 'QOUT')
     _run(['resp', '-C', '-O', '-i', 'ANTECHAMBER_RESP1.IN', '-o', 'R1.OUT',
           '-e', 'ANTECHAMBER.ESP.fixed', '-t', 'qout'],

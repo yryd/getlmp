@@ -35,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config(args.input)
     if args.buffer is not None:
         cfg.buffer = args.buffer
-    report = run_pipeline(cfg)
+    run_pipeline(cfg)
     return 0
 
 

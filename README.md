@@ -156,7 +156,7 @@ molecules:
   - smiles: c1ccccc1
     name: benzene
     count: 1
-# esp 段可调 ESP 导出（默认开启，仅单分子 RESP 生效）：
+# esp 段可调 ESP 导出（默认开启，仅单分子 RESP/RESP2 生效）：
 # esp:
 #   enabled: true   # 不需要 ESP 可视化时改为 false
 #   spacing: 0.3    # 网格间距 Å（0.2 更细、0.5 更快）
@@ -193,6 +193,7 @@ packmol:
 输出极简 data（Masses + Atoms），配 `ffield.reax` + `pair_style reaxff` 即可运行，集群实测通过。
 
 > 可直接运行的完整示例见 `examples/`：`cd examples && python ../main.py methane.yaml`；
+> 注意：产物生成在 `examples/work/`（临时目录，已在 .gitignore，跑完可删）；
 > 设计与经验总结见 `docs/dev_notes.md`。
 
 ---
@@ -239,7 +240,7 @@ packmol:
 
 | 文档 | 内容 |
 |------|------|
-| [`examples/`](examples/) | 可直接运行的示例配置（甲烷/乙醇单体 + 混合体系） |
+| [`examples/`](examples/) | 可直接运行的示例配置（甲烷/乙醇单体 + 混合体系 + RESP/RESP2 + QUICK 回退） |
 | [`docs/dev_notes.md`](docs/dev_notes.md) | 开发文档：规划与需求矩阵、环境搭建、技术坑、验收结论、后续方向 |
 
 ---

@@ -16,7 +16,7 @@ def build_data(cfg: Config, workdir: str, prmtop: str, inpcrd: str,
     box: 显式盒 [xlo,xhi,ylo,yhi,zlo,zhi]（多分子由 packmol 决定；单分子用 buffer）
     """
     out_lmp = os.path.join(workdir, cfg.output)
-    print(f'== 导出层: prmtop → data.lmp ==')
+    print('== 导出层: prmtop → data.lmp ==')
     info = prmtop_to_lammps(prmtop, inpcrd, out_lmp, buffer=cfg.buffer, box=box)
     check = parse_data(out_lmp)
     print(f'  data.lmp: {info["natom"]} atoms / {info["nbond"]} bonds / '

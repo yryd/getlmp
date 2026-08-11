@@ -36,8 +36,8 @@ class PackmolCfg:
 
 @dataclass
 class EspCfg:
-    """ESP 可视化导出（单分子 RESP 时默认生成 _esp.cub + molden）。"""
-    enabled: bool = True     # 仅单分子 RESP 生效
+    """ESP 可视化导出（单分子 RESP/RESP2 时默认生成 _esp.cub + vtx.pdb + 波函数）。"""
+    enabled: bool = True     # 仅单分子 RESP/RESP2 生效
     spacing: float = 0.3     # 网格间距 Å（0.2 更细、0.5 更快）
     buffer: float = 1.5      # 分子外扩 Å（网格覆盖范围）
 

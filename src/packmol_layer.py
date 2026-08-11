@@ -67,7 +67,7 @@ def write_inp(cfg: Config, struct_xyz: list[str], n_atoms: list[int],
         f'tolerance {pm.tolerance:.2f}',
         f'seed {pm.seed}',
         'filetype xyz',
-        f'output packed.xyz',
+        'output packed.xyz',
         '',
     ]
     for i, mc in enumerate(cfg.molecules):

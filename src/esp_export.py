@@ -11,7 +11,6 @@ numpy 向量化网格计算，单分子毫秒级。
 """
 from __future__ import annotations
 
-import math
 import os
 
 import numpy as np

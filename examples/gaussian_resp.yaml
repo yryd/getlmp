@@ -1,5 +1,6 @@
 # RESP 电荷（Gaussian + Multiwfn，531 路线）：乙醇 → 9 原子 data.lmp
 # 运行：cd examples && python ../main.py gaussian_resp.yaml
+# 注意：产物在 examples/work/（临时目录，跑完可删）
 name: gaussian_resp_ethanol
 forcefield: gaff2
 charge_method: resp          # resp 走 qm 段指定引擎
@@ -7,7 +8,7 @@ net_charge: 0
 qm:
   engine: gaussian           # gaussian（默认，G16+Multiwfn）/ quick（QUICK 旧路径）
   method: b3lyp              # 531 推荐 B3LYP-D3(BJ)
-  basis: def2-TZVP
+  basis: def2TZVP            # G16 命名（文献写法 def2-TZVP 也会自动兼容）
   # solvent: water          # 空=气相；RESP2 需要溶剂
   # resp2: false            # RESP2 开关（需 solvent 非空）
   # delta: 0.5              # RESP2 δ

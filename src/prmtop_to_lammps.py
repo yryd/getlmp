@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Dict, List, Tuple
+from typing import List
 
 import numpy as np
 import parmed as pmd

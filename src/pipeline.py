@@ -154,11 +154,12 @@ def run_pipeline(cfg: Config) -> dict:
 
     if cfg.organize_output:
         keep = [exp['data_lmp']] + [m['mol2'] for m in mols if m.get('mol2')] + [xyz_path]
-        # 保留 QM 波函数与 ESP 可视化产物（fch/chg/cub/vtx.pdb）
+        # 保留 QM 波函数与 ESP 可视化**正式产物**（fch/chg + {name}_esp.cub/vtx.pdb；
+        # Multiwfn 原始 vtx.pdb / mapfunc.cub 是中间文件，不保留）
         keep += [p for p in glob.glob(os.path.join(workdir, '*.fch'))]
         keep += [p for p in glob.glob(os.path.join(workdir, '*.chg'))]
-        keep += [p for p in glob.glob(os.path.join(workdir, '*.cub'))]
-        keep += [p for p in glob.glob(os.path.join(workdir, 'vtx.pdb'))]
+        keep += [p for p in glob.glob(os.path.join(workdir, f'{cfg.name}_esp.cub'))]
+        keep += [p for p in glob.glob(os.path.join(workdir, f'{cfg.name}_esp.vtx.pdb'))]
         organize_workdir(workdir, keep, cfg.organize_backup)
     return report
 
@@ -234,7 +235,7 @@ def _run_pipeline_reaxff(cfg: Config, workdir: str, mols: list, multi: bool) -> 
         box = None
         natom_input = m0['natom']
 
-    print(f'== 导出层: ReaxFF 极简 data (Masses + Atoms) ==')
+    print('== 导出层: ReaxFF 极简 data (Masses + Atoms) ==')
     exp = build_data_reaxff(cfg, workdir, blocks, atom_info, box=box)
     ok, msgs = _validate_reaxff(cfg, exp, natom_input)
 
@@ -260,11 +261,12 @@ def _run_pipeline_reaxff(cfg: Config, workdir: str, mols: list, multi: bool) -> 
 
     if cfg.organize_output:
         keep = [exp['data_lmp']] + [m['mol2'] for m in mols if m.get('mol2')] + [xyz_path]
-        # 保留 QM 波函数与 ESP 可视化产物（fch/chg/cub/vtx.pdb）
+        # 保留 QM 波函数与 ESP 可视化**正式产物**（fch/chg + {name}_esp.cub/vtx.pdb；
+        # Multiwfn 原始 vtx.pdb / mapfunc.cub 是中间文件，不保留）
         keep += [p for p in glob.glob(os.path.join(workdir, '*.fch'))]
         keep += [p for p in glob.glob(os.path.join(workdir, '*.chg'))]
-        keep += [p for p in glob.glob(os.path.join(workdir, '*.cub'))]
-        keep += [p for p in glob.glob(os.path.join(workdir, 'vtx.pdb'))]
+        keep += [p for p in glob.glob(os.path.join(workdir, f'{cfg.name}_esp.cub'))]
+        keep += [p for p in glob.glob(os.path.join(workdir, f'{cfg.name}_esp.vtx.pdb'))]
         organize_workdir(workdir, keep, cfg.organize_backup)
     return report
 
@@ -301,7 +303,7 @@ def _validate_reaxff(cfg: Config, exp: dict, natom_input: int) -> tuple[bool, li
     msgs.append('类型计数: 头部与 Coeffs 段一致 通过')
 
     # 电荷列全 0（QEq 待算）
-    msgs.append(f'电荷: 初始 0.0（QEq/reax 模拟中计算）通过')
+    msgs.append('电荷: 初始 0.0（QEq/reax 模拟中计算）通过')
     return ok, msgs
 
 
@@ -338,9 +340,9 @@ def _write_report_reaxff(report: dict) -> None:
         f'- 原子: {info["natom"]}  原子类型: {info["atom_types"]}',
         f'- atom_style: {cfg.reax_atom_style}'
         f'（{"6 列 id charge x y z" if cfg.reax_atom_style == "charge" else "7 列 id mol-id type charge x y z"}）',
-        f'- 键/角/二面角/improper: 无（ReaxFF 键级由 pair_style 计算）',
-        f'- 电荷: 0.0（QEq 模拟中计算）',
-        f'- 盒: {info["box"]}',
+        '- 键/角/二面角/improper: 无（ReaxFF 键级由 pair_style 计算）',
+        '- 电荷: 0.0（QEq 模拟中计算）',
+        '- 盒: [' + ', '.join(f'{v:.3f}' for v in info['box']) + ']',
         f'- 元素顺序（类型号→元素）: {cfg.reax_elements}',
         '',
         '## 校验',
@@ -415,7 +417,7 @@ def _write_report(report: dict) -> None:
         f'- 原子: {info["natom"]}  键: {info["nbond"]}  角: {info["nangle"]}',
         f'- 二面角: {info["ndihedral"]}  improper: {info["nimproper"]}',
         f'- 电荷总和: {info["total_charge"]:.6f}（净电荷 {cfg.net_charge}）',
-        f'- 盒: {info["box"]}',
+        '- 盒: [' + ', '.join(f'{v:.3f}' for v in info['box']) + ']',
         '',
         '## 校验',
         f'- 结论: {"通过" if ok else "失败"}',
