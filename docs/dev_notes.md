@@ -85,6 +85,13 @@ export QUICK_BASIS=$CONDA_PREFIX/AmberTools/src/quick/basis
    `def2TZVP`。代码自动把 `def2-` → `def2` 兼容文献写法。
 3. **g16 直接跑 `-h` 时 formchk 的 SameFileError**：.fch 本身已是最终归档位置时
    跳过 shutil.copy（源==目标）。
+4. **Multiwfn 大分子段错误（forrtl severe 174 SIGSEGV，2026-08-12 实测）**：
+   约 ≥1000 基函数（def2TZVP，含 F 轨道）的 fch 加载到 "Generating density
+   matrix based on SCF orbitals" 时，默认 8 MB 栈上限导致段错误，退出码 174、
+   不产出 .chg（小分子 548 基函数正常）。根因是**栈限制而非并发/内存**：
+   `ulimit -s unlimited` 后正常（Multiwfn 手册 2.1.2；论坛 id=207 官方答复）。
+   `_run_multiwfn` 已用 preexec_fn 解除子进程栈限制 + OMP/KMP_STACKSIZE=1G，
+   无需用户手动 ulimit。若仍见 174，先查 shell `ulimit -s`。
 
 **验证数据（乙醇，2026-08-11）**：
 - RESP(G16)：sum=-0.000000；O=-0.6644、OH-H=+0.3924、C(CH2)=+0.5064、

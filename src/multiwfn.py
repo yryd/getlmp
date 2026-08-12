@@ -15,6 +15,14 @@
 
 Multiwfn 交互式输入用 stdin 管道喂入；退出时可能报 Fortran I/O 错误
 （exit 59，stdin 耗尽），只要目标产物文件已生成即视为成功。
+
+已知坑（2026-08-12 实测）：
+- 大分子（约 ≥1000 基函数，def2TZVP 含 F 轨道）fch 加载到
+  "Generating density matrix based on SCF orbitals" 时，默认 8 MB 栈
+  上限会段错误：forrtl: severe (174): SIGSEGV，退出码 174，不产出 .chg。
+  _run_multiwfn 已通过 preexec_fn 解除子进程栈限制（ulimit -s unlimited），
+  并设置 OMP_STACKSIZE/KMP_STACKSIZE=1G（手册 2.1.2）。若仍见 174，
+  先确认 shell 里 `ulimit -s unlimited` 后再启动管道。
 """
 from __future__ import annotations
 
@@ -22,6 +30,11 @@ import os
 import shutil
 import subprocess
 import sys
+
+try:
+    import resource  # Unix 专用：解除子进程栈限制（Multiwfn 大分子 SIGSEGV 修复）
+except ImportError:  # pragma: no cover - Windows 兜底
+    resource = None
 
 # Multiwfn RESP 标准输入（官方 calcRESP.sh）
 _RESP_INPUT = '7\n18\n1\ny\n0\n0\nq\n'
@@ -52,16 +65,31 @@ def find_multiwfn(cfg_path: str = '') -> str:
         '安装与配置见 docs/install.md；也可在 yaml 用 qm.multiwfn_path 显式指定')
 
 
+def _unlimited_stack() -> None:
+    """preexec_fn：把子进程栈上限设为无限。
+
+    Multiwfn 读大分子（约 ≥1000 基函数，含 F 轨道）fch 生成密度矩阵时，
+    默认 8 MB 栈会段错误（forrtl severe 174 SIGSEGV）；ulimit -s unlimited
+    后正常（Multiwfn 手册 2.1.2，论坛 id=207 官方答复）。
+    """
+    if resource is not None:
+        resource.setrlimit(resource.RLIMIT_STACK,
+                           (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
+
+
 def _run_multiwfn(mwfn: str, wfn_file: str, stdin_text: str,
                   cwd: str, timeout: int = 900) -> str:
     """以 stdin 管道喂输入运行 Multiwfn，返回 stdout 文本。
 
     退出码非 0（如 59 = stdin 耗尽）不视为失败——由调用方检查产物文件。
     """
+    env = dict(os.environ)
+    env.setdefault('OMP_STACKSIZE', '1G')   # 手册 2.1.2：OpenMP 线程栈
+    env.setdefault('KMP_STACKSIZE', '1G')   # Intel 编译器版本同样适用
     r = subprocess.run(
         [mwfn, os.path.abspath(wfn_file), '-ispecial', '1'],
         cwd=cwd, input=stdin_text, capture_output=True, text=True,
-        timeout=timeout,
+        timeout=timeout, env=env, preexec_fn=_unlimited_stack,
     )
     if r.returncode != 0 and r.returncode != 59:
         print(f'  [warn] Multiwfn 退出码 {r.returncode}（可能仍已产出文件）',
