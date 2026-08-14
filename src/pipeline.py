@@ -17,7 +17,7 @@ from export_reaxff import build_data_reaxff
 from molecule_layer import build_molecule
 from packmol_layer import (AVOGADRO, density_box, elements_mass, mol2_mass,
                            mol2_to_xyz, parse_inp_structures, parse_packed_xyz,
-                           run_packmol, sdf_to_xyz, write_inp)
+                           refine_overlap, run_packmol, sdf_to_xyz, write_inp)
 from system_layer import (build_system_multi, build_system_single, count_mol2_topo)
 from xyz_export import export_system_xyz
 
@@ -154,6 +154,20 @@ def run_pipeline(cfg: Config) -> dict:
             type_names = [td['name'] for td in type_defs]
         packed = run_packmol(inp, workdir)
         blocks = parse_packed_xyz(packed, counts, natom_by_name, type_names)
+        # PBC 重叠后处理：packmol 只做欧氏检查（不感知周期边界），可能残留
+        # 边界镜像重叠/溶质贴脸（曾致 LAMMPS E_pair 爆炸 ~1e8 kcal/mol）。
+        # 溶剂（水/离子）可重排，溶质固定。
+        moveable = {td['name'] for td in type_defs if td['kind'] != 'solute'}
+        n_before = _count_overlap_pairs(blocks, type_names, cfg.packmol.box,
+                                        cfg.packmol.tolerance)
+        blocks = refine_overlap(blocks, type_names, cfg.packmol.box,
+                                tol=cfg.packmol.tolerance,
+                                seed=cfg.seed, moveable_names=moveable)
+        n_after = _count_overlap_pairs(blocks, type_names, cfg.packmol.box,
+                                       cfg.packmol.tolerance)
+        if n_before:
+            print(f'  [refine] PBC 重叠检查: {n_before} 对 < '
+                  f'{cfg.packmol.tolerance:.1f} Å → 重排后 {n_after} 对')
         # 非溶质模板描述（水/离子）→ build_system_multi
         extras = []
         for td in type_defs:
@@ -716,3 +730,19 @@ def _write_report(report: dict) -> None:
     ]
     with open(path, 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines) + '\n')
+
+
+def _count_overlap_pairs(blocks: list, type_names: list[str], box: list,
+                         tol: float) -> int:
+    """统计 PBC 最小镜像距离 < tol 的非键分子对数量（供 refine 前后对照）。"""
+    from packmol_layer import _overlap_pairs
+    import numpy as np
+    mols = []
+    for ti, blk in enumerate(blocks):
+        for mol in blk:
+            arr = np.array([[a[1], a[2], a[3]] for a in mol], dtype=float)
+            center = arr.mean(axis=0)
+            r = float(np.max(np.linalg.norm(arr - center, axis=1))) if len(arr) else 0.0
+            mols.append((type_names[ti], arr, r))
+    L = np.array([box[3] - box[0], box[4] - box[1], box[5] - box[2]], dtype=float)
+    return len(_overlap_pairs(mols, L, tol))

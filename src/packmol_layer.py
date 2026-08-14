@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 
+import numpy as np
 import parmed as pmd
 
 from config import Config, PackmolCfg
@@ -60,9 +61,15 @@ def write_inp(cfg: Config, structs: list[tuple[str, str, int]], inp_path: str) -
 
     structs: [(类型名, xyz 文件路径, 拷贝数), ...]，顺序 = packmol 输出顺序
     （溶质 + 水 + 离子；与合并 PDB / 拓扑期望校验一致）。
+
+    inside box 缩进 padding = tolerance/2：packmol 只做欧氏距离检查（不感知
+    周期边界），分子可贴盒边界导致 PBC 下相邻镜像重叠（曾致 data.lmp 能量
+    爆炸 ~1e8 kcal/mol）。缩进后所有原子距边界 ≥ tol/2，任意跨边界分子对的
+    周期最小镜像距离 ≥ tol/2 + tol/2 = tolerance（数学保证无 PBC 重叠）。
     """
     pm: PackmolCfg = cfg.packmol
     xlo, ylo, zlo, xhi, yhi, zhi = pm.box
+    pad = pm.tolerance / 2.0
     lines = [
         f'tolerance {pm.tolerance:.2f}',
         f'nloop0 {pm.nloop0:d}',
@@ -75,7 +82,8 @@ def write_inp(cfg: Config, structs: list[tuple[str, str, int]], inp_path: str) -
         lines += [
             f'structure {os.path.basename(xyz_path)}',
             f'  number {count}',
-            f'  inside box {xlo:.3f} {ylo:.3f} {zlo:.3f} {xhi:.3f} {yhi:.3f} {zhi:.3f}',
+            f'  inside box {xlo + pad:.3f} {ylo + pad:.3f} {zlo + pad:.3f} '
+            f'{xhi - pad:.3f} {yhi - pad:.3f} {zhi - pad:.3f}',
             'end structure',
             '',
         ]
@@ -221,3 +229,144 @@ def parse_packed_xyz(packed_xyz: str, counts: list[int],
             blocks[t].append(coords[idx:idx + n])
             idx += n
     return [blocks[t] for t in order]
+
+
+# ---------------------------------------------------------------- PBC 重叠修复
+# packmol 只做欧氏距离检查：分子可紧贴盒边界，PBC 下与相邻镜像重叠；
+# 且球排除近似对大分子不精确，溶质-溶剂可贴脸（< tolerance）。
+# 这里做周期最小镜像距离检查，把重叠的溶剂分子随机平移重排到无重叠位置。
+
+
+def refine_overlap(blocks: list, type_names: list[str], box: list,
+                   tol: float = 2.0, seed: int = 2026,
+                   moveable_names: set | None = None) -> list:
+    """PBC-aware 重叠后处理：消除 packmol 装盒残留的重叠/贴脸接触。
+
+    blocks: list[type_index] -> list[分子拷贝] -> list[(elem, x, y, z)]
+    type_names: 与 blocks 对应的类型名（'water' / 'ion_*' / 溶质 name）
+    box: packmol box 语义 [xlo,ylo,zlo,xhi,yhi,zhi]
+    tol: 允许的最小非键原子距离（Å），默认 2.0
+    moveable_names: 可重排的类型名集合（默认 None → 全部可重排）。
+      建议传溶剂类型（water/ion_*），溶质固定。
+
+    检查所有分子对的周期最小镜像原子距离，< tol 的分子中可动者随机平移
+    （保持取向）重排，直到全局无重叠或达到轮次上限。返回修正后的 blocks
+    （顺序与原子数不变，仅坐标可能改变）。
+    """
+    import numpy as np
+    if moveable_names is None:
+        moveable_names = set(type_names)
+
+    # 展平为分子列表：(type_name, 原子坐标 (n,3), 半径 r_max)
+    mols: list[tuple[str, np.ndarray, float]] = []
+    for ti, blk in enumerate(blocks):
+        tname = type_names[ti]
+        for mol in blk:
+            arr = np.array([[a[1], a[2], a[3]] for a in mol], dtype=float)
+            center = arr.mean(axis=0)
+            r = float(np.max(np.linalg.norm(arr - center, axis=1))) if len(arr) else 0.0
+            mols.append((tname, arr, r))
+    L = np.array([box[3] - box[0], box[4] - box[1], box[5] - box[2]], dtype=float)
+    rng = np.random.default_rng(seed)
+
+    for _round in range(60):
+        pairs = _overlap_pairs(mols, L, tol)
+        if not pairs:
+            break
+        to_move = set()
+        for i, j in pairs:
+            mi, mj = mols[i][0], mols[j][0]
+            fi, fj = mi not in moveable_names, mj not in moveable_names
+            if fi and fj:
+                continue          # 两个都固定（理论上不该发生：固定对重叠）
+            if fi:
+                to_move.add(j)
+            elif fj:
+                to_move.add(i)
+            else:
+                to_move.add(j)    # 都动时移后一个，保留前一个参考
+        for mi in sorted(to_move):
+            _relocate_molecule(mols, mi, L, tol, rng)
+        if _round == 59:
+            n_left = len(_overlap_pairs(mols, L, tol))
+            raise RuntimeError(
+                f'PBC 重叠重排未收敛（仍剩 {n_left} 对 < {tol:.1f} Å）：'
+                f'体系过密，请增大盒子或减少分子数')
+
+    # 写回 blocks（坐标顺序不变）
+    idx = 0
+    for ti, blk in enumerate(blocks):
+        tname = type_names[ti]
+        for k, mol in enumerate(blk):
+            arr = mols[idx][1]
+            for a_i, (elem, _x, _y, _z) in enumerate(mol):
+                blk[k][a_i] = (elem, float(arr[a_i, 0]), float(arr[a_i, 1]),
+                               float(arr[a_i, 2]))
+            idx += 1
+    return blocks
+
+
+def _pbc_delta(d: np.ndarray, L: np.ndarray) -> np.ndarray:
+    """周期最小镜像差值：Δ - L*round(Δ/L)。"""
+    return d - L * np.round(d / L)
+
+
+def _overlap_pairs(mols: list, L: np.ndarray,
+                   tol: float) -> list[tuple[int, int]]:
+    """找所有最小镜像原子距离 < tol 的分子对（跳过同分子）。"""
+    M = len(mols)
+    if M < 2:
+        return []
+    centers = np.array([m[1].mean(axis=0) for m in mols])       # (M,3)
+    radii = np.array([m[2] for m in mols])                       # (M,)
+    pairs: list[tuple[int, int]] = []
+    # 质心预筛（分块避免超大矩阵）：候选 = 质心最小镜像距离 < tol + 2*max(r_i,r_j)
+    max_r = radii.max() if len(radii) else 0.0
+    cutoff = tol + 2.0 * max_r
+    for i in range(M):
+        d = centers[i + 1:] - centers[i]                         # (M-i-1,3)
+        d = _pbc_delta(d, L)
+        dist = np.sqrt((d * d).sum(axis=1))
+        cand = np.nonzero(dist < cutoff)[0] + (i + 1)
+        for j in cand:
+            if _mol_pair_min_dist(mols[i][1], mols[j][1], L) < tol:
+                pairs.append((i, int(j)))
+    return pairs
+
+
+def _mol_pair_min_dist(a: np.ndarray, b: np.ndarray,
+                       L: np.ndarray) -> float:
+    """两个分子间最小周期镜像原子距离。"""
+    d = a[:, None, :] - b[None, :, :]                            # (na,nb,3)
+    d = _pbc_delta(d, L)
+    return float(np.sqrt((d * d).sum(axis=2)).min())
+
+
+def _relocate_molecule(mols: list, mi: int, L: np.ndarray, tol: float,
+                       rng: np.random.Generator) -> None:
+    """把分子 mi 随机平移到无重叠位置（保持取向，尝试多次）。"""
+    tname, arr, r = mols[mi]
+    n = len(arr)
+    rel = arr - arr.mean(axis=0)                                 # 相对质心
+    for _try in range(300):
+        # 质心采样：保证分子完整在盒内（原子坐标 ∈ [0, L]）
+        lo = r + 1e-6
+        hi = L - r - 1e-6
+        if np.any(hi <= lo):
+            # 分子比盒还大（异常），退回随机平移后 wrap
+            center = rng.uniform(0, L, size=3)
+        else:
+            center = rng.uniform(lo, hi)
+        new = rel + center
+        ok = True
+        for j, (_tj, _aj, _rj) in enumerate(mols):
+            if j == mi:
+                continue
+            if _mol_pair_min_dist(new, _aj, L) < tol:
+                ok = False
+                break
+        if ok:
+            mols[mi] = (tname, new, r)
+            return
+    # 300 次失败：接受最后一次尝试的位置（不抛出，外层轮次会再检查）
+    mols[mi] = (tname, new, r)
