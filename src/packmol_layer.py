@@ -55,9 +55,12 @@ def _element_symbol(atom) -> str:
     return name[0].upper()
 
 
-def write_inp(cfg: Config, struct_xyz: list[str], n_atoms: list[int],
-              inp_path: str) -> None:
-    """生成 packmol inp（阶段 2：bulk 预设，每类型一个 structure 块 inside box）。"""
+def write_inp(cfg: Config, structs: list[tuple[str, str, int]], inp_path: str) -> None:
+    """生成 packmol inp（阶段 2：bulk 预设，每类型一个 structure 块 inside box）。
+
+    structs: [(类型名, xyz 文件路径, 拷贝数), ...]，顺序 = packmol 输出顺序
+    （溶质 + 水 + 离子；与合并 PDB / 拓扑期望校验一致）。
+    """
     pm: PackmolCfg = cfg.packmol
     xlo, ylo, zlo, xhi, yhi, zhi = pm.box
     lines = [
@@ -68,10 +71,10 @@ def write_inp(cfg: Config, struct_xyz: list[str], n_atoms: list[int],
         'output packed.xyz',
         '',
     ]
-    for i, mc in enumerate(cfg.molecules):
+    for name, xyz_path, count in structs:
         lines += [
-            f'structure {os.path.basename(struct_xyz[i])}',
-            f'  number {mc.count}',
+            f'structure {os.path.basename(xyz_path)}',
+            f'  number {count}',
             f'  inside box {xlo:.3f} {ylo:.3f} {zlo:.3f} {xhi:.3f} {yhi:.3f} {zhi:.3f}',
             'end structure',
             '',

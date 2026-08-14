@@ -2,7 +2,7 @@
 
 > 唯一入口：`python main.py input.yaml`。本文列出**全部可用配置项**：类型、默认值、
 > 可选值、作用与组合约束。来源：`src/config.py`（`load_config` 校验逻辑）。
-> 更新日期：2026-08-11。
+> 更新日期：2026-08-14。
 
 ---
 
@@ -17,6 +17,30 @@ charge_method: bcc
 molecules:
   - smiles: CCO
     name: ethanol
+```
+
+**溶剂体系示例**（溶质 + TIP3P 水 + NaCl）：
+
+```yaml
+name: pip_water
+forcefield: gaff2
+charge_method: bcc
+molecules:
+  - smiles: C1CNCCN1
+    name: PIP
+    count: 20
+water:
+  model: tip3p       # tip3p / spce / opc3（二期: opc / tip4pew / tip4pd）
+  count: 800
+ions:
+  - name: Na+
+    count: 20
+  - name: Cl-
+    count: 20
+packmol:
+  density: 1.0       # 水+溶质密度 1.0 g/cm³ → 自动算盒
+workdir: work
+output: data.lmp
 ```
 
 **完整示例**（RESP2，展示全部常用段）：
@@ -57,7 +81,7 @@ organize_output: true
 | `forcefield` | str | `gaff2` | 力场：`gaff2` / `gaff` / `reaxff` |
 | `charge_method` | str | `bcc` | 电荷方法：`bcc`(AM1-BCC) / `abcg2` / `resp` / `resp2` / `none`（`reaxff` 时必须为 `none`） |
 | `net_charge` | int | `0` | 分子净电荷（传给 antechamber `-nc` 与 g16 输入；多分子体系按每个分子拷贝计） |
-| `molecules` | list | **必填** | 分子列表，见 §2 |
+| `molecules` | list | **必填**（除非配了 `water`/`ions`） | 分子列表，见 §2（纯溶剂体系可省略） |
 | `output` | str | `data.lmp` | 输出的 LAMMPS data 文件名（相对 `workdir`） |
 | `workdir` | str | `work` | 工作目录（相对配置文件所在目录） |
 | `seed` | int | `2026` | 随机种子：RDKit ETKDG 3D 构象 + packmol 装盒共用 |
@@ -74,7 +98,7 @@ organize_output: true
 ### 校验规则（顶层）
 - `forcefield` / `charge_method` 取值非法直接报错；
 - `forcefield: reaxff` 时 `charge_method` 必须 `none`（QEq 在模拟中计算）；
-- 缺少 `molecules` 段报错。
+- 缺少 `molecules` 段时，必须有 `water` 或 `ions`（纯溶剂体系），否则报错。
 
 ---
 
@@ -88,17 +112,74 @@ molecules:
     name: ethanol      # 分子名（默认 mol1/mol2...）
     count: 1           # 拷贝数（>1 自动启用 packmol 装盒）
     resname: ETH       # 残基名（antechamber -rn；默认取 name 前 3 字符大写）
-  - smiles: C1CCNCC1
+  - xyz: mol.xyz       # 或直接给 xyz 坐标文件（与 smiles 二选一）
     name: PIP
     count: 5
 ```
 
 | 键 | 类型 | 默认 | 说明 |
 |----|------|------|------|
-| `smiles` | str | **必填** | SMILES 字符串，RDKit 解析并生成 3D 构象 |
+| `smiles` | str | 与 `xyz` 二选一 | SMILES 字符串，RDKit 解析并生成 3D 构象 |
+| `xyz` | str | 与 `smiles` 二选一 | **xyz 坐标文件路径**（相对 yaml 所在目录或绝对路径）。元素符号 + 坐标即可（第 2 行注释可选），RDKit 读入后走与 SMILES 完全相同的分子层链路（加氢不适用——xyz 原子数即最终原子数；antechamber 从坐标建拓扑）。**适用于：已有构象/来自其他软件的体系、或 SMILES 无法表达的坐标** |
 | `name` | str | `mol{序号}` | 分子名（也用于中间文件命名：`{name}.sdf/.mol2/.fch` 等） |
 | `count` | int | `1` | 分子拷贝数。**任一条目 count>1 即视为多分子体系**（自动 packmol，需配 `packmol.box`） |
 | `resname` | str | `name[:3].upper()` | 残基名，antechamber `-rn` 用；默认取 name 前 3 字符大写 |
+
+> `smiles` 与 `xyz` 二选一，同时给会报错。xyz 输入不支持无氢（如金属原子）自动加氢——xyz 里的原子就是最终原子。
+
+---
+
+## 2.5 water 段（水溶剂模板，可选）
+
+> 出现即视为**多分子体系**（与 molecules 一起 packmol 装盒）。也可只有 `water` 无
+> `molecules`（纯水体系）。水参数不自己做——**直接用 AmberTools 内置水模型**
+> （`leaprc.water.*` + box off 库），与 tleap 加载完全一致，保证 prmtop→data.lmp 自洽。
+
+```yaml
+water:
+  model: tip3p    # 一期可用: tip3p / spce / opc3；二期预留: opc / tip4pew / tip4pd
+  count: 3000     # 水分子数
+```
+
+| 键 | 类型 | 默认 | 说明 |
+|----|------|------|------|
+| `model` | str | **必填** | 水模型。**一期（3-site）**：`tip3p`（经典默认）/ `spce` / `opc3`；**二期预留（4-site）**：`opc` / `tip4pew` / `tip4pd`——填了会直接报错提示（4-site 含虚拟位点 EP，LAMMPS data 导出需专门链路，二期实现） |
+| `count` | int | **必填** | 水分子数 |
+
+**实现要点**（对模拟的影响）：
+- 水模型由 tleap 的 `leaprc.water.{model}` 加载（键长/角/电荷/LJ 全来自 AmberTools）；
+- 水坐标从对应 box off 库解析（packmol 装盒用），与 tleap 加载的库严格一致；
+- 水分子无 O-H 键/角定义（刚性模型 + SETTLE），导出 data.lmp 时**自动补**键角：
+  TIP3P 角 k=100 θ=104.52°；SPC/E θ=109.47°；OPC3 θ=109.43°（各模型文献标准值，
+  跑刚性水模拟用 `fix rigid/settle` 时角参数被忽略）；
+- 数据流：`packmol 装水（模板坐标）→ loadpdb → tleap 按水模板分配类型/电荷 → data.lmp`，
+  电荷自动平衡（每分子 O=-2qH），无需 `net_charge` 参与。
+
+---
+
+## 2.6 ions 段（离子溶剂，可选）
+
+```yaml
+ions:
+  - name: Na+      # atomic_ions.lib 类型名（单原子离子）
+    count: 20
+  - name: Cl-
+    count: 20
+```
+
+| 键 | 类型 | 默认 | 说明 |
+|----|------|------|------|
+| `name` | str | **必填** | 离子名，**必须匹配 AmberTools `atomic_ions.lib` 的类型名**（单原子离子）：`Na+` `K+` `Rb+` `Cs+` `Li+` `F-` `Cl-` `Br-` `I-` `Mg2+` `Ca2+` `Zn2+` `Cu2+` `Fe2+` `Fe3+` `Al3+` 等（运行时动态扫描该库，以库内为准）。**多原子离子**（H3O+、NH4+、SO4²⁻ 等）**不做特殊处理**——用 SMILES 走普通分子层（硫酸根已验证：SMILES 输入 → GAFF2 参数 + 电荷守恒） |
+| `count` | int | **必填** | 离子数 |
+
+**参数来源**（重要）：
+- 离子坐标：`atomic_ions.lib` 单原子模板（packmol 装盒）；
+- **LJ 参数随 tleap leaprc 自动加载**：配 TIP3P 水时是 **Joung-Cheatham 12-6**
+  （`frcmod.ionsjc_tip3p`，Na+ ε=0.0874 kcal/mol σ=2.439 Å，Cl- ε=0.0356 σ=4.478 Å，
+  amber 默认）；配 SPC/E/OPC3 水时是各自配套的离子参数（Li/Merz 12-6 等）。
+  检查报告会列出 data.lmp 中离子的实际 LJ 参数供核对。
+- **12-6-4 说明**：Amber 离子参数族里有 12-6-4 变体（含 C4 项），但 LAMMPS 无原生
+  12-6-4 支持（需 NBFIX 类补丁，有坑），本项目默认走标准 12-6 JC/Li-Merz 链路。
 
 ---
 
@@ -204,6 +285,11 @@ packmol:
 | `reax_elements` | 字符串列表；重复元素自动去重 |
 | `reax_atom_style` | 仅 `charge` / `full` |
 | `packmol.box` | 必须 6 个数 |
+| `molecules[].smiles/xyz` | 二选一必填（同时给或都不给报错） |
+| `molecules` 段 | 可省略——当且仅当配置了 `water` 或 `ions`（纯溶剂/离子体系） |
+| `water.model` | 一期 `tip3p`/`spce`/`opc3`；二期预留 `opc`/`tip4pew`/`tip4pd`（直接报错提示） |
+| `ions[].name` | 必须是 `atomic_ions.lib` 中的单原子类型（运行时扫描校验） |
+| `water` / `ions` 出现 | 强制多分子路径（packmol 装盒 + tleap loadpdb），即使所有 count=1 |
 
 ## 7. 力场 × 电荷可用性矩阵
 
@@ -227,3 +313,5 @@ packmol:
 6. G16 未安装/未配置环境时，RESP 请用 `qm.engine: quick`；RESP2 必须 gaussian。
 7. **自定义 packmol inp 流程**：先不带 `inp_file` 跑一次（`workdir/packmol.inp` 会保留在根目录作模板）→ 复制改名（如 `work/my.inp`）自由修改（加 `fixed` 固定某分子、改 number、同类型拆多块）→ yaml 加 `inp_file: work/my.inp` 再跑。改 inp 后 `packmol.inp`/`my.inp` 都不会被 organize 移走。
 8. **`reuse_molecule: true` 复用范围**：仅分子层（mol2/frcmod/波函数）按指纹跳过；**体系层 packmol/tleap 每次都重跑**（改 inp、box、count 不影响分子层复用）。指纹文件 `{name}.fingerprint.json` 与 frcmod 会保留在 workdir 根目录（organize 不移动）。
+9. **水/离子体系是"自动多分子"**：yaml 出现 `water`/`ions` 段即走 packmol + tleap loadpdb 链路（即使所有 count=1），必须配 `packmol.box` 或 `packmol.density`。**密度是按"全部分子（溶质+水+离子）总质量/体积"算的**，所以 `density: 1.0` 对"溶质+水"体系即目标密度 1 g/cm³。
+10. **水/离子体系不要给 `net_charge`**：水与离子电荷由 tleap 模板自动平衡（水 O=-2qH、离子 ±1/±2），导出校验只检查总电荷≈0。溶质自身若带电（如硫酸根 -2），靠 `ions` 里配反离子中和（如 2×Na+）。

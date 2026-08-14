@@ -67,27 +67,70 @@ def run_pipeline(cfg: Config) -> dict:
         box = None
     else:
         # 2b. 体系层：packmol 装盒 + 合并 PDB + tleap loadpdb
-        # 密度模式：按 总质量/密度 自动算立方盒（写回 cfg，write_inp 与导出共用）
+        # 类型清单（顺序 = packmol structure 顺序 = blocks 顺序 = PDB 类型顺序）：
+        #   溶质（mol2 输入）+ 水/离子（内置模板）
+        type_defs: list[dict] = []
+        for mc in cfg.molecules:
+            type_defs.append({'kind': 'solute', 'name': mc.name,
+                              'count': mc.count, 'src': mc})
+        if cfg.water is not None:
+            type_defs.append({'kind': 'water', 'name': 'water',
+                              'count': cfg.water.count, 'src': cfg.water})
+        for ic in cfg.ions:
+            type_defs.append({'kind': 'ion', 'name': f'ion_{ic.name}',
+                              'count': ic.count, 'src': ic})
+
+        # 各类型 xyz（packmol 输入）：溶质从 mol2（现有），水/离子从模板
+        natom_by_name: dict[str, int] = {}
+        for td in type_defs:
+            xyz_path = os.path.join(workdir, td['name'] + '.xyz')
+            if td['kind'] == 'solute':
+                idx = next(i for i, m in enumerate(cfg.molecules) if m is td['src'])
+                natom_by_name[td['name']] = mol2_to_xyz(mols[idx]['mol2'], xyz_path)
+            elif td['kind'] == 'water':
+                from solvent_templates import water_template_xyz, write_template_xyz
+                natom_by_name[td['name']] = write_template_xyz(
+                    water_template_xyz(td['src'].model), xyz_path)
+            else:
+                from solvent_templates import ion_template_xyz, write_template_xyz
+                natom_by_name[td['name']] = write_template_xyz(
+                    ion_template_xyz(td['src'].name), xyz_path)
+
+        # 密度模式：总质量 = 溶质(mol2) + 水/离子(元素质量)，自动算立方盒
         if cfg.packmol.density > 0:
-            masses = [mol2_mass(m['mol2']) for m in mols]
-            total_mass_g = sum(mc.count * mass
-                               for mc, mass in zip(cfg.molecules, masses)) / AVOGADRO
+            from solvent_templates import element_mass
+            total_mass_g = 0.0
+            for td in type_defs:
+                if td['kind'] == 'solute':
+                    idx = next(i for i, m in enumerate(cfg.molecules) if m is td['src'])
+                    mass = mol2_mass(mols[idx]['mol2'])
+                elif td['kind'] == 'water':
+                    from solvent_templates import water_template_xyz
+                    rows = water_template_xyz(td['src'].model)
+                    mass = sum(element_mass(e) for _, e, *_ in rows)
+                else:
+                    from solvent_templates import ion_template_xyz
+                    rows = ion_template_xyz(td['src'].name)
+                    mass = sum(element_mass(e) for _, e, *_ in rows)
+                total_mass_g += td['count'] * mass
+            total_mass_g /= AVOGADRO
             cfg.packmol.box = density_box(total_mass_g, cfg.packmol.density)
             L = cfg.packmol.box[3]
             print(f'== 体系层: packmol (preset={cfg.packmol.preset}, '
-                  f'密度 {cfg.packmol.density} g/cm³ → 盒 {L:.2f} Å 边长) ==')
+                  f'密度 {cfg.packmol.density} g/cm³ → 盒 {L:.2f} Å 边长, '
+                  f'总质量 {total_mass_g * AVOGADRO:.1f} amu) ==')
         else:
             print(f'== 体系层: packmol (preset={cfg.packmol.preset}, '
                   f'box={cfg.packmol.box}) ==')
-        n_atoms = []
-        for i, mc in enumerate(cfg.molecules):
-            n_atoms.append(mol2_to_xyz(mols[i]['mol2'],
-                                       os.path.join(workdir, mc.name + '.xyz')))
-        natom_by_name = {mc.name: n for mc, n in zip(cfg.molecules, n_atoms)}
+        if cfg.water is not None:
+            print(f'  [溶剂] 水模型 {cfg.water.model} × {cfg.water.count}')
+        if cfg.ions:
+            print(f'  [溶剂] 离子: '
+                  + ', '.join(f'{ic.name}×{ic.count}' for ic in cfg.ions))
         if cfg.packmol.inp_file:
             # 自定义 inp（用户改过：加 fixed 约束/改 number/同一类型拆多块等）。
-            # structure 文件名的类型须在 molecules 中；同一类型可拆多个块
-            # （如"固定 1 个 + 自由 N 个"），number 以 inp 内为准。
+            # structure 文件名的类型须在 type_defs 中（溶质 name / water / ion_*）；
+            # 同一类型可拆多个块，number 以 inp 内为准。
             inp = cfg.packmol.inp_file
             print(f'  [custom inp] 使用 {inp}（跳过自动生成 write_inp）')
             structs = parse_inp_structures(inp)
@@ -98,21 +141,31 @@ def run_pipeline(cfg: Config) -> dict:
             for t in type_names:
                 if t not in natom_by_name:
                     raise RuntimeError(
-                        f'自定义 inp structure 文件 {t}.xyz 不在 molecules 中'
-                        f'（可用: {sorted(natom_by_name)}）；结构文件名须为 {{name}}.xyz')
+                        f'自定义 inp structure 文件 {t}.xyz 不在类型清单中'
+                        f'（可用: {sorted(natom_by_name)}）；'
+                        f'结构文件名须为 {{name}}.xyz（溶质=name / water / ion_离子名）')
         else:
             inp = os.path.join(workdir, 'packmol.inp')
-            write_inp(cfg, [os.path.join(workdir, mc.name + '.xyz') for mc in cfg.molecules],
-                      n_atoms, inp)
-            counts = [mc.count for mc in cfg.molecules]
-            type_names = [mc.name for mc in cfg.molecules]
+            write_inp(cfg,
+                      [(td['name'], os.path.join(workdir, td['name'] + '.xyz'),
+                        td['count']) for td in type_defs],
+                      inp)
+            counts = [td['count'] for td in type_defs]
+            type_names = [td['name'] for td in type_defs]
         packed = run_packmol(inp, workdir)
         blocks = parse_packed_xyz(packed, counts, natom_by_name, type_names)
+        # 非溶质模板描述（水/离子）→ build_system_multi
+        extras = []
+        for td in type_defs:
+            if td['kind'] == 'water':
+                extras.append({'kind': 'water', 'model': td['src'].model})
+            elif td['kind'] == 'ion':
+                extras.append({'kind': 'ion', 'ion': td['src'].name})
         sysr = build_system_multi(
             cfg, workdir,
             [m['mol2'] for m in mols],
             [m['frcmod'] for m in mols],
-            blocks)
+            blocks, extras=extras or None)
         natom_input = sum(c * natom_by_name[t] for c, t in zip(counts, type_names))
         print(f'  体系原子总数（期望）: {natom_input}')
         # 拓扑期望：按类型聚合拷贝数（自定义 inp 同一类型可拆多块）
@@ -120,12 +173,20 @@ def run_pipeline(cfg: Config) -> dict:
         for c, t in zip(counts, type_names):
             type_count[t] = type_count.get(t, 0) + c
         expected_topo = {'bonds': 0, 'angles': 0}
-        for mc, m in zip(cfg.molecules, mols):
-            c = type_count.get(mc.name, 0)
-            if c:
-                nb, na = count_mol2_topo(m['mol2'])
+        for td in type_defs:
+            c = type_count.get(td['name'], 0)
+            if not c:
+                continue
+            if td['kind'] == 'solute':
+                idx = next(i for i, m in enumerate(cfg.molecules) if m is td['src'])
+                nb, na = count_mol2_topo(mols[idx]['mol2'])
                 expected_topo['bonds'] += c * nb
                 expected_topo['angles'] += c * na
+            elif td['kind'] == 'water':
+                # 3-site 水：每分子 2 键（O-H1/O-H2）+ 1 角（H1-O-H2）
+                expected_topo['bonds'] += c * 2
+                expected_topo['angles'] += c * 1
+            # 离子无键角
         # packmol box 语义 [xlo,ylo,zlo,xhi,yhi,zhi] → LAMMPS 顺序 [xlo,xhi,ylo,yhi,zlo,zhi]
         b = cfg.packmol.box
         box = [b[0], b[3], b[1], b[4], b[2], b[5]]
@@ -310,8 +371,10 @@ def _run_pipeline_reaxff(cfg: Config, workdir: str, mols: list, multi: bool) -> 
                         f'（可用: {sorted(natom_by_name)}）；结构文件名须为 {{name}}.xyz')
         else:
             inp = os.path.join(workdir, 'packmol.inp')
-            write_inp(cfg, [os.path.join(workdir, mc.name + '.xyz') for mc in cfg.molecules],
-                      n_atoms, inp)
+            write_inp(cfg,
+                      [(mc.name, os.path.join(workdir, mc.name + '.xyz'), mc.count)
+                       for mc in cfg.molecules],
+                      inp)
             counts = [mc.count for mc in cfg.molecules]
             type_names = [mc.name for mc in cfg.molecules]
         packed = run_packmol(inp, workdir)
@@ -424,7 +487,8 @@ def _write_report_reaxff(report: dict) -> None:
         '## 分子层（RDKit 3D 坐标）',
     ]
     for mc, mol in zip(cfg.molecules, mols):
-        lines.append(f'- SMILES: {mc.smiles}  (name={mc.name}, count={mc.count})')
+        src = f'SMILES: {mc.smiles}' if mc.smiles else f'XYZ: {mc.xyz}'
+        lines.append(f'- {src}  (name={mc.name}, count={mc.count})')
         lines.append(f'  - 单分子原子数 (含 H): {mol["natom"]}，'
                      f'元素 {sorted(set(mol["elements"]))}')
     lines += ['', '## 体系层（ReaxFF：坐标装盒，无拓扑）']
@@ -480,6 +544,83 @@ run 0
 """
 
 
+def _pair_coeffs_table(data_lmp: str) -> list[tuple]:
+    """data.lmp Pair Coeffs 段 → [(type_id, ε kcal/mol, σ Å, 类型名), ...]。
+
+    类型名在行尾 # 注释（prmtop_to_lammps 写入）。
+    """
+    rows: list[tuple] = []
+    in_sec = False
+    for ln in open(data_lmp):
+        s = ln.strip()
+        if s.startswith('Pair Coeffs'):
+            in_sec = True
+            continue
+        if not in_sec:
+            continue
+        if not s:
+            if rows:
+                break
+            continue
+        p = s.split()
+        if not p or not p[0].isdigit():
+            break
+        name = s.split('#', 1)[1].strip() if '#' in s else ''
+        try:
+            rows.append((int(p[0]), float(p[1]), float(p[2]), name))
+        except (ValueError, IndexError):
+            break
+    return rows
+
+
+def _water_density_gcm3(data_lmp: str, box: list) -> float | None:
+    """按 data.lmp Masses×Atoms 类型计数 / 盒体积 估算体系密度（g/cm³）。
+
+    盒 [xlo,xhi,ylo,yhi,zlo,zhi]；ρ = Σ(mass_amu × n) / N_A / V。
+    1 cm³ = 1e24 Å³。
+    """
+    try:
+        vol_a3 = (box[1] - box[0]) * (box[3] - box[2]) * (box[5] - box[4])
+        if vol_a3 <= 0:
+            return None
+        masses: dict[int, float] = {}
+        in_sec = False
+        for ln in open(data_lmp):
+            s = ln.strip()
+            if s.startswith('Masses'):
+                in_sec = True
+                continue
+            if in_sec and s and not s.startswith('#'):
+                p = s.split()
+                if p and p[0].isdigit():
+                    masses[int(p[0])] = float(p[1])
+                elif p and not p[0].isdigit():
+                    break
+        type_count: dict[int, int] = {}
+        in_sec = False
+        for ln in open(data_lmp):
+            s = ln.strip()
+            if s.startswith('Atoms'):
+                in_sec = True
+                continue
+            if in_sec:
+                if not s or s.startswith('#'):
+                    continue
+                p = s.split()
+                if not p or not p[0].isdigit():
+                    break
+                try:
+                    atype = int(p[2])   # atom_style full: id mol type q x y z
+                except (ValueError, IndexError):
+                    atype = int(p[1])   # atom_style charge: id type q x y z
+                type_count[atype] = type_count.get(atype, 0) + 1
+        total_mass_g = sum(masses.get(t, 0) * n for t, n in type_count.items())
+        total_mass_g /= AVOGADRO
+        return total_mass_g / (vol_a3 * 1e-24)
+    except Exception:
+        return None
+
+
 def _write_report(report: dict) -> None:
     cfg = report['config']
     mols = report['molecules']
@@ -498,10 +639,11 @@ def _write_report(report: dict) -> None:
         '## 分子层',
     ]
     for mc, mol in zip(cfg.molecules, mols):
+        src = f'SMILES: {mc.smiles}' if mc.smiles else f'XYZ: {mc.xyz}'
         lines += [
-            f'- SMILES: {mc.smiles}  (name={mc.name}, count={mc.count}, '
+            f'- {src}  (name={mc.name}, count={mc.count}, '
             f'resname={mc.resname})',
-            f'  - 单分子原子数 (含 H): {mol["natom"]}，'
+            f'  - 单分子原子数: {mol["natom"]}，'
             f'frcmod: {"有" if mol.get("n_extra") else "无（GAFF 标准库齐全）"}',
         ]
     lines += ['', '## 体系层（tleap）',
@@ -511,6 +653,12 @@ def _write_report(report: dict) -> None:
         lines += [f'- 装盒: packmol preset={cfg.packmol.preset} '
                   f'box={cfg.packmol.box} tolerance={cfg.packmol.tolerance} '
                   f'seed={cfg.packmol.seed}']
+        if cfg.water is not None:
+            lines += [f'- 水溶剂: {cfg.water.model} × {cfg.water.count}'
+                      f'（AmberTools 内置模板, leaprc.water.{cfg.water.model}）']
+        if cfg.ions:
+            lines += ['- 离子（atomic_ions.lib）: '
+                      + ', '.join(f'{ic.name} × {ic.count}' for ic in cfg.ions)]
     lines += [
         '',
         '## 导出层（data.lmp）',
@@ -518,6 +666,19 @@ def _write_report(report: dict) -> None:
         f'- 二面角: {info["ndihedral"]}  improper: {info["nimproper"]}',
         f'- 电荷总和: {info["total_charge"]:.6f}（净电荷 {cfg.net_charge}）',
         '- 盒: [' + ', '.join(f'{v:.3f}' for v in info['box']) + ']',
+    ]
+    if cfg.water is not None:
+        rho = _water_density_gcm3(exp['data_lmp'], info['box'])
+        lines += [f'- 水密度（按 Masses×数量/盒体积 估算）: {rho:.3f} g/cm³'
+                  f'（常温液态水参考 ~0.997）' if rho else
+                  '- 水密度: 盒信息不足，跳过']
+    if cfg.ions:
+        lines += ['- 离子 LJ 参数（data.lmp Pair Coeffs，可与文献核对）:']
+        for row in _pair_coeffs_table(exp['data_lmp']):
+            if any(ion in row[3] for ion in [ic.name for ic in cfg.ions]):
+                lines.append(f'  - type {row[0]}  {row[1]:.6f} kcal/mol  '
+                             f'{row[2]:.6f} Å  # {row[3]}')
+    lines += [
         '',
         '## 校验',
         f'- 结论: {"通过" if ok else "失败"}',

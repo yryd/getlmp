@@ -55,12 +55,22 @@ def _prmtop_elements(prmtop: str) -> list[str]:
     s = pmd.load_file(prmtop)
     elements: list[str] = []
     for a in s.atoms:
-        sym = ''.join(ch for ch in a.name if not ch.isdigit())
+        sym = _element_from_atom_name(a.name)
         z = pt.GetAtomicNumber(sym)
         if z == 0:
             raise RuntimeError(f'无法从原子名推断元素: {a.name!r} ({prmtop})')
         elements.append(pt.GetElementSymbol(z))
     return elements
+
+
+def _element_from_atom_name(name: str) -> str:
+    """原子名 → 元素符号：去序号/电荷后缀（C1→C, Na+→Na, Cl-→Cl）。"""
+    s = name.rstrip('+-0123456789')
+    if not s or not s[0].isalpha():
+        raise RuntimeError(f'无法从原子名推断元素: {name!r}')
+    if len(s) >= 2 and s[1].islower():
+        return s[:2].capitalize()
+    return s[0].upper()
 
 
 def _write_xyz(path: str, elements: list[str], coords: list[list[float]],

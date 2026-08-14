@@ -19,10 +19,40 @@ DEFAULT_REAX_ELEMENTS = ['C', 'H', 'O', 'N', 'S', 'P', 'F', 'Cl', 'Br', 'I']
 
 @dataclass
 class MoleculeCfg:
-    smiles: str
-    name: str
+    smiles: str = ''         # SMILES（与 xyz 二选一）
+    name: str = ''
     count: int = 1
     resname: str = ''        # 残基名（antechamber -rn），默认取 name 前 3 字符大写
+    xyz: str = ''            # xyz 输入路径（与 smiles 二选一；绝对路径或相对 yaml）
+                             # 原子坐标原样使用（无加 H/无优化），键由 RDKit 推断
+
+
+@dataclass
+class WaterCfg:
+    """水溶剂（内置模板，AmberTools 原生力场）。
+
+    yaml 写法：
+      water:
+        model: tip3p        # 一期: tip3p / spce / opc3（二期: opc/tip4pew/tip4pd 预留）
+        count: 3000         # 水分子数（数量，不做浓度）
+    出现即强制多分子 packmol 装盒。
+    """
+    model: str = ''
+    count: int = 0
+
+
+@dataclass
+class IonCfg:
+    """离子（AmberTools atomic_ions.lib 单原子库，LJ 随 leaprc 加载）。
+
+    yaml 写法：
+      ions:
+        - name: Na+         # atomic_ions.lib 类型名（Na+ Cl- K+ Ca2+ ... 单原子）
+          count: 20
+    多原子离子（H3O+/NH4+ 等）不支持。
+    """
+    name: str = ''
+    count: int = 0
 
 
 @dataclass
@@ -85,6 +115,8 @@ class Config:
     charge_method: str = 'bcc'
     net_charge: int = 0
     molecules: list = field(default_factory=list)   # list[MoleculeCfg]
+    water: WaterCfg | None = None                    # 水溶剂（None=无水；出现即多分子）
+    ions: list = field(default_factory=list)         # list[IonCfg]
     packmol: PackmolCfg = field(default_factory=PackmolCfg)
     esp: EspCfg = field(default_factory=EspCfg)
     qm: QmCfg = field(default_factory=QmCfg)
@@ -189,12 +221,18 @@ def load_config(path: str) -> Config:
 
     mols = raw.get('molecules')
     if not mols:
-        raise ValueError('配置缺少 molecules 段')
+        # 纯溶剂/离子体系允许无 molecules（water 或 ions 存在时）
+        if not raw.get('water') and not raw.get('ions'):
+            raise ValueError('配置缺少 molecules 段（或 water/ions 溶剂段）')
+        mols = []
     multi = False
     for m in mols:
-        smiles = m.get('smiles')
-        if not smiles:
-            raise ValueError('molecules 条目缺少 smiles')
+        smiles = m.get('smiles', '')
+        xyz = str(m.get('xyz', '') or '').strip()
+        if not smiles and not xyz:
+            raise ValueError('molecules 条目需要 smiles 或 xyz（二选一）')
+        if smiles and xyz:
+            raise ValueError('molecules 条目不能同时给 smiles 和 xyz（二选一）')
         name = str(m.get('name', f'mol{len(cfg.molecules) + 1}'))
         mc = MoleculeCfg(
             smiles=str(smiles),
@@ -202,9 +240,57 @@ def load_config(path: str) -> Config:
             count=int(m.get('count', 1)),
             resname=str(m.get('resname', name[:3].upper())),
         )
+        if xyz:
+            p = xyz if os.path.isabs(xyz) else os.path.join(cfg.base_dir, xyz)
+            if not os.path.exists(p):
+                raise ValueError(f'molecules 的 xyz 文件不存在: {p}')
+            mc.xyz = os.path.abspath(p)
         if mc.count > 1:
             multi = True
         cfg.molecules.append(mc)
+
+    # water 段（内置水模板；出现即强制多分子装盒）
+    wt = raw.get('water')
+    if wt is not None:
+        if not isinstance(wt, dict):
+            raise ValueError('water 需要字典配置，如 {model: tip3p, count: 3000}')
+        from solvent_templates import water_model   # 查表（含二期拦截）
+        model = str(wt.get('model', '')).strip()
+        if not model:
+            raise ValueError('water.model 不能为空（一期: tip3p / spce / opc3）')
+        wm = water_model(model)   # 不存在/二期预留 → 报错
+        count = int(wt.get('count', 0))
+        if count <= 0:
+            raise ValueError(f'water.count 需为正整数（分子数），当前 {count!r}')
+        cfg.water = WaterCfg(model=model, count=count)
+        multi = True
+        print(f'  [config] 水溶剂: {model} × {count}（模板 {wm["box_off"]}）')
+
+    # ions 段（atomic_ions.lib 单原子；出现即强制多分子装盒）
+    ions = raw.get('ions')
+    if ions:
+        if not isinstance(ions, list):
+            raise ValueError('ions 需要列表，如 [{name: Na+, count: 20}]')
+        from solvent_templates import ion_type   # 查表（单原子库）
+        for it in ions:
+            if not isinstance(it, dict):
+                raise ValueError(f'ions 条目需要字典 {{name, count}}，收到 {it!r}')
+            iname = str(it.get('name', '')).strip()
+            if not iname:
+                raise ValueError('ions 条目缺少 name（如 Na+ / Cl-）')
+            t = ion_type(iname)   # 不在库 → 报错（附可用清单）
+            icount = int(it.get('count', 0))
+            if icount <= 0:
+                raise ValueError(f'ions 中 {iname} 的 count 需为正整数，当前 {icount!r}')
+            cfg.ions.append(IonCfg(name=iname, count=icount))
+            multi = True
+            print(f'  [config] 离子: {iname} × {icount}'
+                  f'（atomic_ions.lib, 电荷 {t["charge"]:+.0f}）')
+
+    if cfg.forcefield == 'reaxff' and (cfg.water is not None or cfg.ions):
+        raise ValueError('forcefield=reaxff 暂不支持内置水/离子模板'
+                         '（ReaxFF 的水/离子请走 molecules 输入；'
+                         '内置模板仅 gaff/gaff2 力场）')
 
     # packmol 段（多分子自动启用 bulk）
     pm = raw.get('packmol') or {}

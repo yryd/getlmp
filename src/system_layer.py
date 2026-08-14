@@ -90,27 +90,57 @@ def build_system_single(cfg: Config, workdir: str, mol2: str, frcmod: str) -> di
 # ---------------------------------------------------------------- 多分子
 
 def _write_packed_pdb(cfg: Config, mol2_list: list[str], blocks: list[list[list[tuple]]],
-                      out_pdb: str) -> None:
-    """packed 坐标块 + 各类型 mol2 原子名 → 合并 PDB（残基名来自 mol2，TER 分隔）。
+                      out_pdb: str, extras: list[dict] | None = None) -> None:
+    """packed 坐标块 + 各类型原子名 → 合并 PDB（残基名来自 mol2，TER 分隔）。
 
-    blocks[t][k] = [(elem, x, y, z), ...]（第 t 类型第 k 个分子的坐标）
+    blocks[t][k] = [(elem, x, y, z), ...]（第 t 类型第 k 个分子的坐标）。
+    extras: 溶质之外的模板类型（水/离子），与 blocks 后半段一一对应：
+      {'kind': 'water', 'model': 'tip3p'}      → 残基 WAT（原子名/元素来自 off 模板）
+      {'kind': 'ion', 'ion': 'Na+'}            → 残基/原子名来自 atomic_ions.lib
     """
     tmpl = []
     for mol2 in mol2_list:
         s = pmd.load_file(mol2)
         tmpl.append([(a.name, _element_symbol(a)) for a in s.atoms])
 
+    # extras 模板（水/离子）：原子名 + 元素 + 残基名（PDB 必须与 tleap 库模板一致）
+    ext_tmpl: list[dict] = []
+    for ex in (extras or []):
+        kind = ex['kind']
+        if kind == 'water':
+            from solvent_templates import water_template_xyz
+            rows = water_template_xyz(ex['model'])
+            ext_tmpl.append({'resname': 'WAT',
+                             'atoms': [(n, e) for n, e, *_ in rows]})
+        elif kind == 'ion':
+            from solvent_templates import ion_type
+            t = ion_type(ex['ion'])
+            ext_tmpl.append({'resname': t['resname'],
+                             'atoms': [(t['atomname'], t['elem'])]})
+        else:
+            raise RuntimeError(f'未知模板类型 kind={kind!r}（water/ion）')
+
     lines = []
     serial = 0
     resseq = 0
     for t, block in enumerate(blocks):
-        s = pmd.load_file(mol2_list[t])
-        resname = _resname_of(s)
+        if t < len(mol2_list):
+            s = pmd.load_file(mol2_list[t])
+            resname = _resname_of(s)
+            atoms = tmpl[t]
+        else:
+            et = ext_tmpl[t - len(mol2_list)]
+            resname = et['resname']
+            atoms = et['atoms']
+        if len(resname) > 3:
+            raise RuntimeError(
+                f'PDB 残基名 {resname!r} 超 3 字符（tleap loadpdb 列宽限制）；'
+                f'该离子模板不支持（atomic_ions.lib 中残基名 {resname!r}）')
         for k, mol_coords in enumerate(block):
             resseq += 1
             for j in range(len(mol_coords)):
                 serial += 1
-                name, elem = tmpl[t][j]
+                name, elem = atoms[j]
                 x, y, z = mol_coords[j][1], mol_coords[j][2], mol_coords[j][3]
                 lines.append(_pdb_atom_line(serial, name, resname, resseq, x, y, z, elem))
             lines.append('TER')   # 断开分子间键合
@@ -156,13 +186,90 @@ def _mol2_to_prepi(mol2: str, prepi: str, cwd: str) -> None:
          cwd, f'antechamber({os.path.basename(prepi)})')
 
 
+def _fix_water_topology(prmtop: str, inpcrd: str, model: str) -> dict:
+    """修复水分子拓扑（AmberTools 水模板无 connect/angle，loadpdb 需校正）。
+
+    背景：solvents.lib 的 TP3/SPC/OPC3 水模板没有 connect0（分子内键）和
+    angle 定义——Amber 水靠 SETTLE 约束，sander/pmemd 不需要显式键角参数。
+    tleap loadpdb 对无模板键的残基走自动键合：
+      - O-H1 / O-H2 键 ✓（正确）
+      - H1-H2 误建键 ✗（H-H 距离 1.51 Å 落入自动键合阈值）
+      - 角 0 ✗（tleap 角只来自模板定义，不从键图推导）
+    这里用 ParmEd 校正：删 H1-H2 键 + 确保 O-H1/O-H2 键 + 补 H1-O-H2 角
+    （角类型 HW-OW-HW，参数取水模型表的标准值；LAMMPS 需要显式角参数，
+    刚性水模拟可再用 fix rigid/settle，角参数被忽略）。
+    返回统计 {'bonds_removed', 'bonds_added', 'angles_added'}。
+    """
+    from parmed.topologyobjects import Angle, AngleType, Bond
+    from solvent_templates import water_model
+
+    wm = water_model(model)
+    s = pmd.load_file(prmtop, inpcrd)
+    stat = {'bonds_removed': 0, 'bonds_added': 0, 'angles_added': 0}
+
+    # 1) 删 WAT 残基内 H1-H2 键
+    for b in list(s.bonds):
+        a1, a2 = b.atom1, b.atom2
+        if (a1.residue.name == 'WAT' and a2.residue.name == 'WAT'
+                and {a1.name, a2.name} == {'H1', 'H2'}):
+            s.bonds.remove(b)
+            stat['bonds_removed'] += 1
+
+    # 2) 确保 O-H1/O-H2 键存在（自动键合通常已建；缺失时补，用现有 OW-HW 类型）
+    ow_type = None
+    for b in s.bonds:
+        if b.atom1.residue.name == 'WAT' and {b.atom1.name, b.atom2.name} == {'O', 'H1'}:
+            ow_type = b.type
+            break
+    for res in s.residues:
+        if res.name != 'WAT':
+            continue
+        atoms = {a.name: a for a in res.atoms}
+        o = atoms['O']
+        for hn in ('H1', 'H2'):
+            h = atoms[hn]
+            if not any((b.atom1 is o and b.atom2 is h)
+                       or (b.atom1 is h and b.atom2 is o) for b in s.bonds):
+                s.bonds.append(Bond(o, h, ow_type))
+                stat['bonds_added'] += 1
+
+    # 3) 补 H1-O-H2 角（HW-OW-HW；k/θeq 取水模型表标准值）
+    atype = AngleType(wm['angle_k'], wm['angle_theta'])
+    s.angle_types.append(atype)
+    for res in s.residues:
+        if res.name != 'WAT':
+            continue
+        atoms = {a.name: a for a in res.atoms}
+        o, h1, h2 = atoms['O'], atoms['H1'], atoms['H2']
+        if not any((a.atom1 is h1 and a.atom2 is o and a.atom3 is h2)
+                   or (a.atom1 is h2 and a.atom2 is o and a.atom3 is h1)
+                   for a in s.angles):
+            s.angles.append(Angle(h1, o, h2, atype))
+            stat['angles_added'] += 1
+
+    # parmed save 不覆盖已存在文件 → 写临时再原子替换
+    tmp_p, tmp_i = prmtop + '.fix', inpcrd + '.fix'
+    s.save(tmp_p, format='amber')
+    s.save(tmp_i, format='rst7')
+    os.replace(tmp_p, prmtop)
+    os.replace(tmp_i, inpcrd)
+    return stat
+
+
 def build_system_multi(cfg: Config, workdir: str, mol2_list: list[str],
-                       frcmod_list: list[str], blocks: list[list[list[tuple]]]) -> dict:
-    """多分子 tleap：合并 PDB + loadamberprep 模板 → 体系 prmtop/inpcrd。"""
+                       frcmod_list: list[str], blocks: list[list[list[tuple]]],
+                       extras: list[dict] | None = None) -> dict:
+    """多分子 tleap：合并 PDB + loadamberprep 模板 → 体系 prmtop/inpcrd。
+
+    extras: 水/离子模板类型（见 _write_packed_pdb）；水存在时 tleap 额外
+    `source leaprc.water.{model}`（加载水 + 离子 LJ 参数，与 yaml 选择的
+    水模型配套）。无 extras 时行为与旧版一致。
+    """
     packed_pdb = os.path.join(workdir, 'packed.pdb')
-    _write_packed_pdb(cfg, mol2_list, blocks, packed_pdb)
+    _write_packed_pdb(cfg, mol2_list, blocks, packed_pdb, extras=extras)
     print(f'  合并 PDB: {os.path.relpath(packed_pdb)} '
-          f'({sum(len(b) for b in blocks)} 分子)')
+          f'({sum(len(b) for b in blocks)} 分子'
+          + (f' + {len(extras)} 模板类型' if extras else '') + ')')
 
     # prepi 模板（teLeap loadpdb 需要）
     prepi_list = []
@@ -171,6 +278,14 @@ def build_system_multi(cfg: Config, workdir: str, mol2_list: list[str],
         _mol2_to_prepi(mol2, prepi, workdir)
         prepi_list.append(prepi)
 
+    # 水模型 leaprc（若含水的模板类型；水模型决定配水离子参数 frcmod.ions*）
+    water_leaprc = None
+    for ex in (extras or []):
+        if ex['kind'] == 'water':
+            from solvent_templates import water_model
+            water_leaprc = water_model(ex['model'])['leaprc']
+            break
+
     name = cfg.name
     prmtop = os.path.join(workdir, name + '.prmtop')
     inpcrd = os.path.join(workdir, name + '.inpcrd')
@@ -178,6 +293,8 @@ def build_system_multi(cfg: Config, workdir: str, mol2_list: list[str],
     tleap_in = os.path.join(workdir, 'tleap.in')
     with open(tleap_in, 'w') as f:
         f.write(f'source {_leaprc(cfg.forcefield)}\n')
+        if water_leaprc:
+            f.write(f'source {water_leaprc}\n')
         for prepi in prepi_list:
             f.write(f'loadamberprep {os.path.basename(prepi)}\n')
         for x in frcmod_list:
@@ -186,7 +303,20 @@ def build_system_multi(cfg: Config, workdir: str, mol2_list: list[str],
         f.write(f'saveamberparm sys {os.path.basename(prmtop)} {os.path.basename(inpcrd)}\n')
         f.write('quit\n')
 
-    print(f'== 体系层: tleap loadpdb (leaprc={_leaprc(cfg.forcefield)}) ==')
+    print(f'== 体系层: tleap loadpdb (leaprc={_leaprc(cfg.forcefield)}'
+          + (f' + {water_leaprc}' if water_leaprc else '') + ') ==')
     _run(['tleap', '-f', os.path.basename(tleap_in)], workdir, 'tleap')
     print(f'  tleap → {os.path.relpath(prmtop)} / {os.path.relpath(inpcrd)}')
-    return {'prmtop': prmtop, 'inpcrd': inpcrd, 'pdb': packed_pdb}
+
+    # 水拓扑修复（AmberTools 水模板无 connect/angle，见 _fix_water_topology）
+    water_fix = None
+    if water_leaprc:
+        model = next(ex['model'] for ex in (extras or []) if ex['kind'] == 'water')
+        water_fix = _fix_water_topology(prmtop, inpcrd, model)
+        print(f'  水拓扑修复: 删 H-H 键 {water_fix["bonds_removed"]}, '
+              f'补 O-H 键 {water_fix["bonds_added"]}, '
+              f'补 H-O-H 角 {water_fix["angles_added"]}'
+              f'（角参数 HW-OW-HW k={water_model(model)["angle_k"]:g} '
+              f'θeq={water_model(model)["angle_theta"]:g}°）')
+    return {'prmtop': prmtop, 'inpcrd': inpcrd, 'pdb': packed_pdb,
+            'water_fix': water_fix}

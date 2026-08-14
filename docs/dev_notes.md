@@ -257,3 +257,57 @@ AmberTools 26 已内置 `BCCPARM_ABCG2.DAT` / `ATOMTYPE_ABCG2.DEF`（conda 环�
 
 **约束**：`density` 与 `inp_file` 互斥（自动盒子只对自动生成的 inp 有效；自定义 inp
 里写 density 关键字时盒子由 packmol 内部计算，data.lmp 盒边界无法对齐）。
+
+
+## 11. 水/离子溶剂 + xyz 输入（2026-08-14 实现，T1-T9 验证通过）
+
+**需求**（博士拍板，一期范围）：yaml 支持 `water:`（TIP3P/SPC/E/OPC3）+ `ions:`
+（单原子离子）溶剂段，自动与溶质 packmol 装盒；二期留 OPC/TIP4P*（4-site EP）接口；
+`molecules` 条目支持 xyz 坐标输入（与 smiles 二选一）。
+
+**设计决策**：
+1. **水参数不自己做**——直接用 AmberTools 内置模板：tleap `leaprc.water.{model}`
+   （键长/角/电荷/LJ）+ 对应 box off 库（坐标）。与 tleap 加载严格一致 → prmtop 自洽。
+   单分子水坐标从 off 库文本解析（不依赖 parmed，避 residue table 警告噪音）。
+2. **离子**：`atomic_ions.lib` 动态扫描（运行时读库，类型名与 tleap 完全一致）；
+   单原子离子。**多原子离子不做特殊处理**（H3O+/NH4+/SO4²⁻ 走 SMILES 分子层）。
+3. **离子 LJ 随 leaprc 自动加载**：TIP3P 配 Joung-Cheatham 12-6
+   （`frcmod.ionsjc_tip3p`，Na+ ε=0.0874393 σ=2.439；Cl- ε=0.035591 σ=4.478）；
+   SPC/E/OPC3 配各自 Li/Merz 12-6。检查报告列出离子 LJ 供核对。
+   12-6-4 族参数 **不做**（LAMMPS 无原生 12-6-4，NBFIX 有坑）。
+4. **水键角修复**：AmberTools 水模板无 O-H 键/H-O-H 角定义（刚性 + SETTLE 设计），
+   LAMMPS data 需显式 → 导出时自动补：删 loadpdb 产生的 H-H 键（tleap 把水 O-H 距
+   离 0.9572 以内误成 H-H 键？—— 实际是 loadpdb 时水单元 H-H 被 tleap 成键），
+   补 O-H 键 0 条 + H-O-H 角 N 条（TIP3P k=100 θ=104.52；SPC/E θ=109.47；OPC3
+   θ=109.43，文献标准值）。跑刚性模拟可再 `fix rigid/settle` 忽略角参数。
+5. **EP 双层拦截**（二期接口已留）：config 层 `water.model: opc/tip4pew/tip4pd`
+   报错"二期预留"（`supported=False` 表驱动）；导出层 `prmtop_to_lammps` 对
+   `ExtraPoint`/type='EP' 原子报错，防静默产错 data。二期只需：放行模型 + EP 虚拟位点
+   → LAMMPS `# This section for virtual sites` + `atom_style full` 的 EP 位点导出。
+6. **xyz 输入**：`molecules[].xyz`（与 smiles 二选一）→ RDKit 读坐标 → 与 SMILES
+   完全相同的分子层链路（antechamber 从坐标建拓扑/类型/电荷）。不加氢——xyz 原子数
+   即最终原子数。
+7. **纯溶剂体系**：`water`/`ions` 出现即可无 `molecules` 段（config 校验放宽）。
+
+**新增/改动文件**：`src/solvent_templates.py`（新，水/离子模板表 + off 坐标解析 +
+atomic_ions.lib 扫描）、`src/config.py`（water/ions/xyz 段校验）、`src/molecule_layer.py`
+（xyz→SDF 入口）、`src/packmol_layer.py`（水/离子合并装盒）、`src/system_layer.py`
+（tleap 加载水/离子模板 + 水键角修复）、`src/prmtop_to_lammps.py`（EP 拦截 + mol-id
+按残基分组）、`docs/yaml_config.md`（§2.5/2.6）。
+
+**验收（T1-T9，全过）**：
+- T1 纯水 TIP3P 500：1540 atoms 全过，密度 1.000 g/cm³（按质量/体积估算）。
+- T4 PIP 20 + TIP3P 800：2720 atoms / 1920 bonds / 1400 angles 全过。
+- T5 水 500 + Na+20/Cl-20：1540 atoms，电荷 0；报告列 Na+/Cl- LJ（JC）。
+- T6 PIP 10 + SPC/E 500 + Na+5/Cl-5：1670 atoms / 1160 bonds / 800 angles 全过。
+- T7 xyz 单分子（乙醇 9 atoms）：全 GAFF 标准参数（frcmod 空）。
+- T8 xyz 乙醇 10 + TIP3P 500：1590 atoms 全过。
+- T9 EP 拦截：OPC prmtop（216 水含 EP）→ 导出层 RuntimeError 拦截；yaml
+  `model: tip4pew` → config ValueError 拦截。
+- 回归测试 3/3 通过。
+
+**坑**：
+1. tleap loadpdb 纯水/离子 PDB 时，水的 H-H 被当成键（loadpdb 距离成键逻辑），
+   导出 data 前必须删 H-H 键、补 O-H 键与 H-O-H 角（见上）。
+2. `$LEAPRC` 在 tleap 脚本内不展开（非 shell 变量），off 路径必须写绝对路径。
+3. parmed 读 mol2 的 atomic_number 对 Cl 错识别成 C（历史坑），元素推断一律原子名优先。

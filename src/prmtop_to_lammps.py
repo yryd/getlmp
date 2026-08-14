@@ -78,6 +78,13 @@ def prmtop_to_lammps(prmtop: str, inpcrd: str, out_lmp: str,
     atom_type_names: List[str] = []   # 类型名 -> LAMMPS type id (1-based)
     type_id = {}
     for a in s.atoms:
+        # 4-site 水模型（OPC/TIP4P*）的虚拟位点（EP）：LAMMPS 无对应位置，
+        # 需要专门导出链路（二期）；本期直接报错避免静默产错 data。
+        if isinstance(a, pmd.ExtraPoint) or a.type == 'EP':
+            raise RuntimeError(
+                f'体系含 4-site 水虚拟位点（原子 {a.name!r}, type={a.type!r}）：'
+                f'LAMMPS data 导出暂不支持 EP 位点（二期 OPC/TIP4P* 预留）。'
+                f'请改用 3-site 水模型（tip3p / spce / opc3）')
         if a.type not in type_id:
             type_id[a.type] = len(atom_type_names) + 1
             atom_type_names.append(a.type)

@@ -50,6 +50,34 @@ def _smiles_to_sdf(smiles: str, out_sdf: str, seed: int) -> int:
     return mol.GetNumAtoms()
 
 
+def _xyz_to_sdf(xyz_path: str, out_sdf: str) -> int:
+    """用户 xyz → SDF（坐标原样，键由 RDKit 推断，不补氢不优化）。
+
+    xyz 文件格式（标准 xyz）：
+      第 1 行: 原子数；第 2 行: 注释；随后 N 行: `元素 x y z`。
+    元素可为符号（O/H/C）或原子序数（RDKit MolFromXYZFile 均支持）。
+    返回原子数。
+    """
+    from rdkit import Chem
+    from rdkit.Chem import rdDetermineBonds
+
+    mol = Chem.MolFromXYZFile(xyz_path)
+    if mol is None:
+        raise RuntimeError(f'RDKit 无法解析 xyz: {xyz_path}'
+                           f'（标准格式: 原子数 / 注释 / 元素+坐标行）')
+    natom = mol.GetNumAtoms()
+    # 键推断：无连接信息的 xyz → DetermineBonds（各向异性 vdW 半径法）。
+    # 失败（如仅单原子）时允许无键（tleap 层会报错，但坐标链路先通）。
+    try:
+        rdDetermineBonds.DetermineBonds(mol, charge=0)
+    except Exception as e:
+        print(f'  [info] xyz 键推断失败（{e}），按无键处理（连接性由 tleap 校验）')
+    w = Chem.SDWriter(out_sdf)
+    w.write(mol)
+    w.close()
+    return natom
+
+
 def _sdf_elements_coords(sdf: str) -> tuple[list[str], list[list[float]]]:
     """SDF → (元素列表, 坐标列表 [[x,y,z],...])，顺序与 SDF 原子一致。"""
     from rdkit import Chem
@@ -74,6 +102,7 @@ def _molecule_fingerprint(cfg: Config, mc: MoleculeCfg) -> dict:
     """
     return {
         'smiles': mc.smiles,
+        'xyz': mc.xyz,              # xyz 输入（绝对路径；无则空串）
         'name': mc.name,
         'resname': (mc.resname or mc.name[:3]).upper()[:3],
         'forcefield': cfg.forcefield,
@@ -174,9 +203,14 @@ def build_molecule(cfg: Config, mc: MoleculeCfg, workdir: str) -> dict:
 
     sdf = base + '.sdf'
 
-    print(f'== 分子层: {mc.name} ({mc.smiles}) ==')
-    natom = _smiles_to_sdf(mc.smiles, sdf, cfg.seed)
-    print(f'  SMILES → SDF: {natom} atoms (incl. H)')
+    if mc.xyz:
+        print(f'== 分子层: {mc.name} (xyz: {os.path.basename(mc.xyz)}) ==')
+        natom = _xyz_to_sdf(mc.xyz, sdf)
+        print(f'  xyz → SDF: {natom} atoms（坐标原样，键由 RDKit 推断）')
+    else:
+        print(f'== 分子层: {mc.name} ({mc.smiles}) ==')
+        natom = _smiles_to_sdf(mc.smiles, sdf, cfg.seed)
+        print(f'  SMILES → SDF: {natom} atoms (incl. H)')
 
     if cfg.forcefield == 'reaxff':
         # ReaxFF 分支：坐标 + 元素即可，不需要 antechamber / parmchk2
