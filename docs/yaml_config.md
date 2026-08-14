@@ -141,18 +141,23 @@ qm:
 ```yaml
 esp:
   enabled: true    # 不需要可视化时 false（不影响 RESP 电荷拟合本身）
-  # spacing / buffer 已废弃（旧点电荷近似 cube 参数，Multiwfn 网格自动）
+  pt: false        # pt 法产物（mol.pdb/vtx.pdb），默认关（基本不用；需要时开）
+  spacing: auto    # auto=按原子数分档（≤20:0.25 / 21-40:0.3 / >40:0.4）| 0.15~0.8 显式
+  timeout: auto    # auto=按原子数分档（≤20:600 / 21-40:1800 / >40:3600）| 秒数；0=不限
 ```
 
 | 键 | 类型 | 默认 | 说明 |
 |----|------|------|------|
 | `enabled` | bool | `true` | 是否导出 ESP 可视化产物。`false` 只关可视化，**不影响电荷拟合** |
-| `spacing` | float | `0.3` | （废弃）旧点电荷 cube 网格间距。Multiwfn 网格自动，不再使用 |
-| `buffer` | float | `1.5` | （废弃）旧点电荷 cube 分子外扩。Multiwfn 网格自动，不再使用 |
+| `pt` | bool | `false` | 是否导出 pt 法产物（默认关）。pt 法输出 `pt/mol.pdb` + `pt/vtx.pdb` |
+| `spacing` | `auto`/float | `auto` | iso/pt 法**表面格点间距 Å**。`auto`：按原子数分档（≤20→0.25，21-40→0.3，>40→0.4）；显式：0.15~0.8（Multiwfn 手册建议 0.15~0.25 精细，0.4~0.6 大分子加速）。2026-08-14：Multiwfn 默认 0.25 对 ≥1000 基函数大分子表面点数爆炸会超时，故引入分档 |
+| `timeout` | `auto`/int | `auto` | Multiwfn 单次调用超时**秒**。`auto`：按原子数分档（≤20→600，21-40→1800，>40→3600）；`0`=不限（不推荐，卡死无兜底） |
 
 **产物**（统一 Multiwfn 导出，engine=gaussian 用 `.fch`、quick 用 `.molden`），位于 `_others/electrostatic_potential/`：
-- `iso/density.cub` + `iso/esp.cub`：iso 法——严格 QM 电子密度与 ESP 网格（同一网格，VMD density 等值面 0.001 + esp 着色）。
-- `pt/mol.pdb` + `pt/vtx.pdb`：pt 法——分子结构与闭合等值面顶点（B 因子=ESP kcal/mol，VMD Beta 着色）。
+- `iso/density.cub` + `iso/esp.cub`：iso 法——严格 QM 电子密度与 ESP 网格（同一网格，VMD density 等值面 0.001 + esp 着色）。**默认生成**。
+- `pt/mol.pdb` + `pt/vtx.pdb`：pt 法——分子结构与闭合等值面顶点（B 因子=ESP kcal/mol，VMD Beta 着色）。**需 `esp.pt: true`**。
+
+> 旧字段 `buffer` 已废弃移除；yaml 里遗留的 `buffer` 键会被忽略。
 
 ---
 
@@ -194,7 +199,8 @@ packmol:
 | `packmol.enabled`（多分子） | 必须 `packmol.box` 或 `packmol.density`（>0）；`preset` 只能 `bulk` |
 | `packmol.inp_file` | 仅多分子可用（单分子报错）；文件必须存在；structure 文件名须为 `{name}.xyz`（对应 molecules 的 name）；**与 `packmol.density` 互斥** |
 | `qm.delta` | 必须在 [0,1] |
-| `esp.spacing` / `esp.buffer` | 必须为正数 |
+| `esp.spacing` | `auto` 或 0.15~0.8（Å） |
+| `esp.timeout` | `auto` 或 ≥0 整数（0=不限） |
 | `reax_elements` | 字符串列表；重复元素自动去重 |
 | `reax_atom_style` | 仅 `charge` / `full` |
 | `packmol.box` | 必须 6 个数 |

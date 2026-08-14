@@ -143,27 +143,43 @@ def run_pipeline(cfg: Config) -> dict:
     esp_iso_dir = None
     esp_pt_dir = None
     if not multi and cfg.charge_method in ('resp', 'resp2') and cfg.esp.enabled:
-        from multiwfn import esp_pt, esp_cube as mwfn_cube, density_cube
+        from multiwfn import (esp_pt, esp_cube as mwfn_cube, density_cube,
+                              auto_esp_params)
         wavefn = mols[0].get('wavefn')
         if not wavefn or not os.path.exists(wavefn):
             raise RuntimeError(f'ESP 导出需要波函数文件，未找到: {wavefn}')
+        # 解析 ESP 参数：esp.spacing / esp.timeout 支持 'auto'（按原子数分档）
+        spacing, timeout = cfg.esp.spacing, cfg.esp.timeout
+        if spacing == 'auto' or timeout == 'auto':
+            auto_s, auto_t = auto_esp_params(mols[0]['natom'])
+            spacing = auto_s if spacing == 'auto' else spacing
+            timeout = auto_t if timeout == 'auto' else timeout
+        mwfn_timeout = None if timeout == 0 else timeout   # 0=不限
+        print(f'  [esp] spacing={spacing} Å, timeout={mwfn_timeout or "不限"}'
+              f'（原子数 {mols[0]["natom"]}）')
         esp_root = os.path.join(workdir, '_others', 'electrostatic_potential')
         iso_dir = os.path.join(esp_root, 'iso')
         pt_dir = os.path.join(esp_root, 'pt')
         os.makedirs(iso_dir, exist_ok=True)
-        os.makedirs(pt_dir, exist_ok=True)
-        # pt 法：mol.pdb（分子结构）+ vtx.pdb（密度 0.001 等值面顶点，B 因子=ESP）
-        esp_pt(wavefn,
-               os.path.join(pt_dir, 'mol.pdb'),
-               os.path.join(pt_dir, 'vtx.pdb'),
-               workdir=workdir, multiwfn_path=cfg.qm.multiwfn_path)
-        print('  ESP pt  → ' + os.path.join(pt_dir, 'mol.pdb') + ' + vtx.pdb'
-              '（Multiwfn 密度 0.001 等值面, B 因子=ESP kcal/mol, VMD Beta 着色）')
+        if cfg.esp.pt:
+            os.makedirs(pt_dir, exist_ok=True)
+            # pt 法：mol.pdb（分子结构）+ vtx.pdb（密度 0.001 等值面顶点，B 因子=ESP）
+            esp_pt(wavefn,
+                   os.path.join(pt_dir, 'mol.pdb'),
+                   os.path.join(pt_dir, 'vtx.pdb'),
+                   workdir=workdir, multiwfn_path=cfg.qm.multiwfn_path,
+                   spacing=spacing, timeout=mwfn_timeout)
+            print('  ESP pt  → ' + os.path.join(pt_dir, 'mol.pdb') + ' + vtx.pdb'
+                  '（Multiwfn 密度 0.001 等值面, B 因子=ESP kcal/mol, VMD Beta 着色）')
+        else:
+            print('  [info] esp.pt=false，跳过 pt 法（默认关闭；需要时 yaml 设 esp.pt: true）')
         # iso 法：esp.cub（严格 QM ESP）+ density.cub（电子密度，同一网格）
         mwfn_cube(wavefn, os.path.join(iso_dir, 'esp.cub'),
-                  workdir=workdir, multiwfn_path=cfg.qm.multiwfn_path)
+                  workdir=workdir, multiwfn_path=cfg.qm.multiwfn_path,
+                  spacing=spacing, timeout=mwfn_timeout)
         density_cube(wavefn, os.path.join(iso_dir, 'density.cub'),
-                     workdir=workdir, multiwfn_path=cfg.qm.multiwfn_path)
+                     workdir=workdir, multiwfn_path=cfg.qm.multiwfn_path,
+                     spacing=spacing, timeout=mwfn_timeout)
         print('  ESP iso → ' + os.path.join(iso_dir, 'esp.cub') + ' + density.cub'
               '（Multiwfn 严格 QM, VMD iso 渲染: density 等值面 + ESP 着色）')
         # 清理 Multiwfn 中间文件（正式产物已 copy 到位）
@@ -173,7 +189,7 @@ def run_pipeline(cfg: Config) -> dict:
                 os.remove(p)
         print(f'  波函数 → {wavefn}（VMD/Multiwfn 可视化用）')
         esp_iso_dir = iso_dir
-        esp_pt_dir = pt_dir
+        esp_pt_dir = pt_dir if cfg.esp.pt else None
     elif multi and cfg.charge_method in ('resp', 'resp2'):
         print('  [info] 多分子体系跳过 ESP 导出（当前仅单分子 RESP/RESP2 支持）')
 
@@ -509,15 +525,22 @@ def _write_report(report: dict) -> None:
     lines += [f'- {m}' for m in report['validation']['messages']]
     if not multi and cfg.charge_method in ('resp', 'resp2') and cfg.esp.enabled:
         wfn_type = 'Gaussian .fch' if cfg.qm.engine == 'gaussian' else 'QUICK .molden'
+        spacing, timeout = cfg.esp.spacing, cfg.esp.timeout
+        if spacing == 'auto' or timeout == 'auto':
+            auto_s, auto_t = auto_esp_params(mols[0]['natom'])
+            spacing = auto_s if spacing == 'auto' else spacing
+            timeout = auto_t if timeout == 'auto' else timeout
         lines += [
             '',
             '## ESP 可视化导出（单分子 RESP/RESP2, Multiwfn）',
+            f'- 参数: spacing={spacing} Å, timeout={timeout or "不限"}'
+            f'（原子数 {mols[0]["natom"]}）',
             '- iso 法: _others/electrostatic_potential/iso/'
             '（density.cub 电子密度 + esp.cub 严格 QM ESP；'
             'VMD: density 等值面 0.001 + esp 着色）',
             '- pt 法: _others/electrostatic_potential/pt/'
             '（mol.pdb 分子结构 + vtx.pdb 密度 0.001 等值面顶点；'
-            'B 因子=ESP kcal/mol, VMD Beta 着色）',
+            'B 因子=ESP kcal/mol, VMD Beta 着色；esp.pt: true 时生成，默认关）',
             f'- 波函数: {os.path.basename(mols[0].get("wavefn") or "-")} '
             f'（{wfn_type}, VMD/Multiwfn 可视化/二次分析用）',
         ]

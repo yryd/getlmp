@@ -42,17 +42,22 @@ class PackmolCfg:
 
 @dataclass
 class EspCfg:
-    """ESP 可视化导出（单分子 RESP/RESP2 时默认生成 iso/pt 两套产物）。
+    """ESP 可视化导出（单分子 RESP/RESP2 时默认生成 iso 产物，pt 可选）。
 
     产物位于 _others/electrostatic_potential/ 下：
       iso/{density.cub, esp.cub}   iso 法（VMD: 密度等值面 + ESP 着色）
       pt/{mol.pdb, vtx.pdb}        pt 法（分子结构 + ESP 曲面顶点，Beta 着色）
     统一由 Multiwfn 导出（gaussian 用 .fch，quick 用 .molden）。
+
+    spacing/timeout 支持 'auto'（按原子数自动分档，见 multiwfn.auto_esp_params）
+    或显式指定。2026-08-14：Multiwfn iso 法默认表面格点间距 0.25 Å 对
+    ≥1000 基函数大分子点数爆炸超时，故引入自动分档。
     """
     enabled: bool = True     # 仅单分子 RESP/RESP2 生效
-    # 以下字段为旧点电荷近似 cube（esp_export）参数，已废弃保留兼容：
-    spacing: float = 0.3     # （废弃）网格间距 Å，Multiwfn 网格自动，不再使用
-    buffer: float = 1.5      # （废弃）分子外扩 Å，Multiwfn 网格自动，不再使用
+    pt: bool = False         # pt 法产物（mol.pdb/vtx.pdb），默认关（基本不用；需要时开）
+    spacing: object = 'auto'     # 'auto'=按原子数分档（≤20:0.25 / 21-40:0.3 / >40:0.4）| 0.15~0.8 显式
+    timeout: object = 'auto'     # 'auto'=按原子数分档（≤20:600 / 21-40:1800 / >40:3600）| 秒数；0=不限
+    # 旧字段 spacing/buffer（废弃点电荷 cube 参数）已移除；yaml 里遗留的 buffer 键被忽略
 
 
 @dataclass
@@ -238,10 +243,29 @@ def load_config(path: str) -> Config:
     # ESP 可视化导出（默认开启；仅单分子 RESP/RESP2 生效）
     esp = raw.get('esp') or {}
     if not isinstance(esp, dict):
-        raise ValueError('esp 需要字典配置，如 {enabled: true, spacing: 0.3, buffer: 1.5}')
+        raise ValueError('esp 需要字典配置，如 {enabled: true, spacing: auto, timeout: auto}')
     cfg.esp.enabled = bool(esp.get('enabled', True))
-    cfg.esp.spacing = float(esp.get('spacing', 0.3))
-    cfg.esp.buffer = float(esp.get('buffer', 1.5))
-    if cfg.esp.spacing <= 0 or cfg.esp.buffer <= 0:
-        raise ValueError('esp.spacing / esp.buffer 需为正数')
+    cfg.esp.pt = bool(esp.get('pt', False))
+    # spacing: 'auto'（按原子数分档）或 0.15~0.8 Å 显式指定
+    s = esp.get('spacing', 'auto')
+    if isinstance(s, str):
+        if s.lower() != 'auto':
+            raise ValueError(f'esp.spacing 只支持 auto 或数值（如 0.3），收到 {s!r}')
+        cfg.esp.spacing = 'auto'
+    else:
+        s = float(s)
+        if not (0.15 <= s <= 0.8):
+            raise ValueError(f'esp.spacing 需在 0.15~0.8 Å（Multiwfn 手册建议范围），收到 {s}')
+        cfg.esp.spacing = s
+    # timeout: 'auto'（按原子数分档）或秒数；0=不限（subprocess timeout=None）
+    t = esp.get('timeout', 'auto')
+    if isinstance(t, str):
+        if t.lower() != 'auto':
+            raise ValueError(f'esp.timeout 只支持 auto、秒数或 0（不限），收到 {t!r}')
+        cfg.esp.timeout = 'auto'
+    else:
+        t = int(t)
+        if t < 0:
+            raise ValueError(f'esp.timeout 不能为负数: {t}')
+        cfg.esp.timeout = t
     return cfg
