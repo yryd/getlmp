@@ -2,7 +2,7 @@
 
 > 唯一入口：`python main.py input.yaml`。本文列出**全部可用配置项**：类型、默认值、
 > 可选值、作用与组合约束。来源：`src/config.py`（`load_config` 校验逻辑）。
-> 更新日期：2026-08-14。
+> 更新日期：2026-08-15。
 
 ---
 
@@ -121,7 +121,7 @@ molecules:
 | `smiles` | str | 与 `xyz` 二选一 | SMILES 字符串，RDKit 解析并生成 3D 构象 |
 | `xyz` | str | 与 `smiles` 二选一 | **xyz 坐标文件路径**（相对 yaml 所在目录或绝对路径）。元素符号 + 坐标即可（第 2 行注释可选），RDKit 读入后走与 SMILES 完全相同的分子层链路（加氢不适用——xyz 原子数即最终原子数；antechamber 从坐标建拓扑）。**适用于：已有构象/来自其他软件的体系、或 SMILES 无法表达的坐标** |
 | `name` | str | `mol{序号}` | 分子名（也用于中间文件命名：`{name}.sdf/.mol2/.fch` 等） |
-| `count` | int | `1` | 分子拷贝数。**任一条目 count>1 即视为多分子体系**（自动 packmol，需配 `packmol.box`） |
+| `count` | int | `1` | 分子拷贝数。**任一条目 count>1 即视为多分子体系**（自动 packmol，需配 `packmol.box` 或 `packmol.density`） |
 | `resname` | str | `name[:3].upper()` | 残基名，antechamber `-rn` 用；默认取 name 前 3 字符大写 |
 
 > `smiles` 与 `xyz` 二选一，同时给会报错。xyz 输入不支持无氢（如金属原子）自动加氢——xyz 里的原子就是最终原子。
@@ -275,7 +275,7 @@ packmol:
 | 组合 | 约束 |
 |------|------|
 | `charge_method: resp2` | 必须同时 `qm.engine: gaussian`（QUICK 无 resp2）、`qm.resp2: true`、`qm.solvent` 非空 |
-| `forcefield: reaxff` | `charge_method` 必须 `none`；ReaxFF 路径忽略 qm/esp 段 |
+| `forcefield: reaxff` | `charge_method` 必须 `none`；ReaxFF 路径忽略 qm/esp 段；**不能配 `water`/`ions` 段**（内置水/离子模板仅 gaff/gaff2 力场，ReaxFF 的水/离子走 molecules 输入） |
 | `packmol.enabled`（多分子） | 必须 `packmol.box` 或 `packmol.density`（>0）；`preset` 只能 `bulk` |
 | `packmol.inp_file` | 仅多分子可用（单分子报错）；文件必须存在；structure 文件名须为 `{name}.xyz`（对应 molecules 的 name）；**与 `packmol.density` 互斥** |
 | `qm.delta` | 必须在 [0,1] |
@@ -314,3 +314,16 @@ packmol:
 8. **`reuse_molecule: true` 复用范围**：仅分子层（mol2/frcmod/波函数）按指纹跳过；**体系层 packmol/tleap 每次都重跑**（改 inp、box、count 不影响分子层复用）。指纹文件 `{name}.fingerprint.json` 与 frcmod 会保留在 workdir 根目录（organize 不移动）。
 9. **水/离子体系是"自动多分子"**：yaml 出现 `water`/`ions` 段即走 packmol + tleap loadpdb 链路（即使所有 count=1），必须配 `packmol.box` 或 `packmol.density`。**密度是按"全部分子（溶质+水+离子）总质量/体积"算的**，所以 `density: 1.0` 对"溶质+水"体系即目标密度 1 g/cm³。
 10. **水/离子体系不要给 `net_charge`**：水与离子电荷由 tleap 模板自动平衡（水 O=-2qH、离子 ±1/±2），导出校验只检查总电荷≈0。溶质自身若带电（如硫酸根 -2），靠 `ions` 里配反离子中和（如 2×Na+）。
+
+---
+
+## 9. CLI 参数（main.py）
+
+> 本文档主题是 yaml 配置，这里列出 main.py 的命令行参数供完整参考（详情见 README）：
+
+| 参数 | 说明 |
+|------|------|
+| `input.yaml` | 位置参数，配置文件路径（必填） |
+| `--buffer FLOAT` | 单分子盒 padding（Å，默认 3.8）。**覆盖 yaml 顶层 `buffer`**（见 §1） |
+| `--version` | 打印版本号后退出 |
+
