@@ -60,7 +60,6 @@ qm:
 esp:
   enabled: true
   spacing: 0.3
-  buffer: 1.5
 molecules:
   - smiles: CCO
     name: ethanol

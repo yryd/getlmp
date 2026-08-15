@@ -253,7 +253,6 @@ def refine_overlap(blocks: list, type_names: list[str], box: list,
     （保持取向）重排，直到全局无重叠或达到轮次上限。返回修正后的 blocks
     （顺序与原子数不变，仅坐标可能改变）。
     """
-    import numpy as np
     if moveable_names is None:
         moveable_names = set(type_names)
 
@@ -346,7 +345,6 @@ def _relocate_molecule(mols: list, mi: int, L: np.ndarray, tol: float,
                        rng: np.random.Generator) -> None:
     """把分子 mi 随机平移到无重叠位置（保持取向，尝试多次）。"""
     tname, arr, r = mols[mi]
-    n = len(arr)
     rel = arr - arr.mean(axis=0)                                 # 相对质心
     for _try in range(300):
         # 质心采样：保证分子完整在盒内（原子坐标 ∈ [0, L]）

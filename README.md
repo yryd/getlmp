@@ -13,7 +13,7 @@ getlmp 是一个分子动力学建模工具链：输入分子的 SMILES 和体�
 并输出一份检查报告。不用再手工拼 antechamber / packmol / tleap / ParmEd 的每一步。
 
 ```bash
-python main.py input.yaml    # → data.lmp + work/check_report.txt
+python main.py input.yaml    # → data.lmp + work/_others/check_report.txt
 ```
 
 ---
@@ -113,9 +113,9 @@ OVITO/VMD 可视化或传给其他工具（如 Multiwfn）。
 
 - `data.lmp` — LAMMPS 可直接 `read_data` 的 data 文件（文件名 = yaml `output:`，默认 `data.lmp`）
 - `work/` — 工作目录；`organize_output: true`（默认）时根目录只保留
-  `output` 的 lmp + 各分子 `{name}.mol2` + `system.xyz` + `check_report.txt` +
+  `output` 的 lmp + 各分子 `{name}.mol2` + `system.xyz` +
   波函数（`*.fch`/`*.molden`/`*.chg`），其余中间文件（prmtop、sdf、frcmod、
-  esp.cub、ANTECHAMBER_* 等）自动移入 `work/_others/`；
+  esp.cub、ANTECHAMBER_* 等）以及 `check_report.txt` 自动移入 `work/_others/`；
   同名文件默认直接覆盖只留最新一份，如需保留历史多份可设 `organize_backup: true`
 
 ---
@@ -177,7 +177,9 @@ molecules:
 # esp 段可调 ESP 导出（默认开启，仅单分子 RESP/RESP2 生效）：
 # esp:
 #   enabled: true   # 不需要 ESP 可视化时改为 false
-#   # spacing/buffer 已废弃（旧点电荷近似 cube 参数），Multiwfn 网格自动
+#   spacing: auto   # 'auto' 按原子数分档（≤20:0.25 / 21-40:0.3 / >40:0.4 Å），或显式 0.15~0.8 Å
+#   timeout: auto   # 'auto' 按原子数分档（600/1800/3600 s），或秒数；0=不限
+#   # 旧字段 buffer（点电荷近似 cube 参数）已废弃移除，yaml 里遗留的 buffer 键会被忽略
 ```
 
 流程：SMILES → 3D → antechamber（bcc 类型占位）→ g16 单点（pop=MK ESP）
@@ -234,8 +236,8 @@ packmol:
 ### 流程会产出哪些文件（workdir 内）
 
 > `organize_output: true`（默认）跑完自动整理：根目录只留 `data.lmp` + 各 `{name}.mol2` +
-> `system.xyz` + `check_report.txt` + 波函数（`*.fch`/`*.molden`/`*.chg`），
-> 下面表格里的其余文件全部移入 `work/_others/`。
+> `system.xyz` + 波函数（`*.fch`/`*.molden`/`*.chg`），
+> 下面表格里的其余文件（含 `check_report.txt`）全部移入 `work/_others/`。
 
 | 类别 | 文件 | 说明 |
 |------|------|------|
@@ -321,10 +323,10 @@ src/
 测试（无需 pytest，直接运行；每个用例在临时目录执行，不污染项目）：
 
 ```bash
-python tests/test_build_systems.py    # 甲烷/乙醇单体 + 混合体系，3/3
+python tests/test_build_systems.py    # 甲烷/乙醇单体 + 混合体系 + 自定义inp复用，4/4
 ```
 
 改动后回归：运行上述测试，或在临时目录准备 `input.yaml` 执行 `python main.py input.yaml` 验证输出与校验报告。
 
-每个阶段交付：代码 + 检查报告（运行报告在 `workdir/check_report.txt`，开发经验归档 `docs/dev_notes.md`）。
+每个阶段交付：代码 + 检查报告（运行报告在 `workdir/_others/check_report.txt`，开发经验归档 `docs/dev_notes.md`）。
 

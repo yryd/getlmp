@@ -125,7 +125,7 @@ def run_pipeline(cfg: Config) -> dict:
         if cfg.water is not None:
             print(f'  [溶剂] 水模型 {cfg.water.model} × {cfg.water.count}')
         if cfg.ions:
-            print(f'  [溶剂] 离子: '
+            print('  [溶剂] 离子: '
                   + ', '.join(f'{ic.name}×{ic.count}' for ic in cfg.ions))
         if cfg.packmol.inp_file:
             # 自定义 inp（用户改过：加 fixed 约束/改 number/同一类型拆多块等）。
@@ -699,6 +699,7 @@ def _write_report(report: dict) -> None:
     ]
     lines += [f'- {m}' for m in report['validation']['messages']]
     if not multi and cfg.charge_method in ('resp', 'resp2') and cfg.esp.enabled:
+        from multiwfn import auto_esp_params   # 与 run_pipeline 的 ESP 分支一致（局部 import）
         wfn_type = 'Gaussian .fch' if cfg.qm.engine == 'gaussian' else 'QUICK .molden'
         spacing, timeout = cfg.esp.spacing, cfg.esp.timeout
         if spacing == 'auto' or timeout == 'auto':

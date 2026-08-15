@@ -150,9 +150,10 @@ def test_custom_inp_reuse() -> None:
             default_inp = f.read()
 
         # 改造：乙醇块 → 1 fixed（盒中心）+ 4 自由
+        # （write_inp 的 inside box 已带 tolerance/2=1.0 Å 缩进，见 packmol_layer.py）
         ethanol_block = ("structure ethanol.xyz\n"
                          "  number 5\n"
-                         "  inside box 0.000 0.000 0.000 30.000 30.000 30.000\n"
+                         "  inside box 1.000 1.000 1.000 29.000 29.000 29.000\n"
                          "end structure\n")
         assert ethanol_block in default_inp, "默认 inp 未找到乙醇块"
         fixed_block = ("structure ethanol.xyz\n"

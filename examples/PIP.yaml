@@ -11,7 +11,9 @@ molecules:
 # esp 段可调 ESP 可视化导出（默认开启；不需要时 enabled: false，仅单分子 RESP/RESP2 生效）：
 # esp:
 #   enabled: true
-#   # spacing/buffer 已废弃（旧点电荷近似 cube 参数，Multiwfn 网格自动）
+#   spacing: auto   # 'auto' 按原子数分档（≤20:0.25 / 21-40:0.3 / >40:0.4 Å），或显式 0.15~0.8 Å
+#   timeout: auto   # 'auto' 按原子数分档（600/1800/3600 s），或秒数；0=不限
+#   # 旧字段 buffer（点电荷近似 cube 参数）已废弃移除，yaml 里遗留的 buffer 键会被忽略
 output: PIP.lmp
 workdir: work
 seed: 2026

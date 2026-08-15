@@ -12,7 +12,7 @@
 **架构**：分子层（RDKit 3D → antechamber 类型+电荷 → parmchk2）→ 体系层（单分子 tleap /
 多分子 packmol 装盒 + tleap loadpdb）→ 导出层（prmtop → data.lmp + 校验 + 报告）。
 
-## 2. 需求矩阵（状态截至 2026-08-11）
+## 2. 需求矩阵（状态截至 2026-08-15）
 
 | 力场 | 电荷 | 优先级 | 状态 |
 |------|------|--------|------|
@@ -110,7 +110,8 @@ export QUICK_BASIS=$CONDA_PREFIX/AmberTools/src/quick/basis
   0.001 闭合等值面顶点，B 因子字段=ESP(kcal/mol)，VMD Beta 着色直接看图。
 - `{name}.fch`（gaussian）或 `{name}.molden`（quick）：波函数归档，**保留在 workdir
   根目录**（organize 不清除，VMD/Multiwfn 二次分析用）。
-- 旧点电荷近似粗 cube（esp_export.py）已废弃删除；esp.spacing/buffer 保留但不再生效。
+- 旧点电荷近似粗 cube（esp_export.py）已废弃删除；esp.buffer 已废弃移除（yaml 遗留键忽略），
+  esp.spacing/timeout 已启用：'auto' 按原子数分档（≤20:0.25/600s，21-40:0.3/1800s，>40:0.4/3600s）或显式指定。
 
 **qm.opt 优化几何回写 mol2（2026-08-11 实现 + 验收）**：
 
@@ -195,7 +196,7 @@ AmberTools 26 已内置 `BCCPARM_ABCG2.DAT` / `ATOMTYPE_ABCG2.DEF`（conda 环�
 
 ## 8. 交付约定
 
-每个阶段交付：代码 + 检查报告。运行检查报告随每次运行生成于 `workdir/check_report.txt`
+每个阶段交付：代码 + 检查报告。运行检查报告随每次运行生成于 `workdir/_others/check_report.txt`
 ；开发经验与验收结论归档至本文档。
 
 ## 9. 自定义 packmol inp + 分子层复用（2026-08-11 实现）
