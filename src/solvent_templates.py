@@ -28,15 +28,19 @@ LIB_DIR = os.path.join(AMBER_DAT, 'leap', 'lib')
 CMD_DIR = os.path.join(AMBER_DAT, 'leap', 'cmd')
 
 # ---------------------------------------------------------------- 水模型表
-# supported=True 一期可用；False = 二期/预留（config 校验拦截，接口已留）。
-# nsite: 原子数（含虚拟位点时 > 实际原子数？—— 不，nsite = PDB 中写的原子数，
-# 4-site 模型（OPC/tip4pew/tip4pd）PDB 需写 4 个原子（O H1 H2 + 虚拟 M/EP），
-# 但 AmberTools 的 box off 里 4-site 的 EP 也是原子（type=EP），导出层会拦截。
+# nsite: PDB 中写的原子数（3-site = 3；4-site = 4，含虚拟位点 EPW）。
+# 4-site（TIP4P*/OPC）：AmberTools 的负电荷全在 EPW（O 电荷=0），
+# LAMMPS 用隐式 M 方案（pair_style lj/cut/tip4p/long 运行时从 O-H 几何推导
+# M 位点，data 不需要 EP 原子）→ 导出时 EP 电荷合并到 O、丢弃 EP 原子。
+# om_dist: O→M 距离（LAMMPS pair_style qdist 参数；文献值，报告对照用，
+# 实现时以 off 坐标实测为准）。
+# custom_leaprc: AmberTools 无现成 leaprc（经典 TIP4P），getlmp 内置。
 WATER_MODELS: dict[str, dict] = {
     # angle_k/angle_theta: HW-OW-HW 角参数（AmberTools 水模板无角定义，
     # SETTLE 约束设计；LAMMPS data 需要显式角参数，取各模型标准值：
     #   TIP3P: Jorgensen 100/104.52；SPC/E: Berendsen 100/109.47
     #   （frcmod.spce 键长 1.0 配套文献几何）；OPC3: 100/109.43（Izadi 2016）
+    #   TIP4P*/TIP4P-D: 104.52；OPC: 103.60（LAMMPS Howto_tip4p 表）
     # 刚性水模拟可再用 fix rigid/settle，角参数被忽略）
     'tip3p': dict(leaprc='leaprc.water.tip3p', box_off='tip3pbox.off',
                   resname='WAT', nsite=3, supported=True,
@@ -50,43 +54,48 @@ WATER_MODELS: dict[str, dict] = {
                  resname='WAT', nsite=3, supported=True,
                  angle_k=100.0, angle_theta=109.43,
                  desc='OPC3（3-site，OPC 系列简化版，模拟精度好）'),
-    # ---- 二期预留（supported=False，yaml 使用时报错提示） ----
-    'opc': dict(leaprc='leaprc.water.opc', box_off='opcbox.off',
-                resname='WAT', nsite=4, supported=False, has_ep=True,
-                desc='OPC（4-site，需导出层 EP 支持，二期）'),
+    # ---- 二期：4-site 水（LAMMPS 隐式 M 方案，导出层 EP 合并/丢弃） ----
+    'tip4p': dict(leaprc='leaprc.water.tip4p', box_off='tip4pbox.off',
+                  resname='WAT', nsite=4, supported=True, has_ep=True,
+                  custom_leaprc=True,
+                  angle_k=100.0, angle_theta=104.52, om_dist=0.1500,
+                  desc='TIP4P（经典 4-site，Jorgensen 1983；AmberTools 无现成 '
+                       'leaprc，getlmp 内置；离子参数沿用 JC_TIP3P 近似）'),
     'tip4pew': dict(leaprc='leaprc.water.tip4pew', box_off='tip4pewbox.off',
-                    resname='WAT', nsite=4, supported=False, has_ep=True,
-                    desc='TIP4P-Ew（4-site，需导出层 EP 支持，二期）'),
-    'tip4pd': dict(leaprc='leaprc.water.tip4pd', box_off='tip4pdbox.off',
-                   resname='WAT', nsite=4, supported=False, has_ep=True,
-                   desc='TIP4P-D（4-site，需导出层 EP 支持，二期）'),
+                    resname='WAT', nsite=4, supported=True, has_ep=True,
+                    angle_k=100.0, angle_theta=104.52, om_dist=0.1250,
+                    desc='TIP4P-Ew（4-site，Ewald 优化，Horn 2004）'),
+    'tip4pd': dict(leaprc='leaprc.water.tip4pd', box_off='tip4pd.off',
+                   resname='WAT', nsite=4, supported=True, has_ep=True,
+                   angle_k=100.0, angle_theta=104.52, om_dist=0.1546,
+                   desc='TIP4P-D（4-site，色散校正，Piana 2015；'
+                        '离子参数 CHARMM22）'),
+    'opc': dict(leaprc='leaprc.water.opc', box_off='opcbox.off',
+                resname='WAT', nsite=4, supported=True, has_ep=True,
+                angle_k=100.0, angle_theta=103.60, om_dist=0.1594,
+                desc='OPC（4-site，最优 4 点水，Izadi 2014）'),
 }
 
 
 def water_model(name: str) -> dict:
-    """查水模型表（不存在/二期预留均报错，附可选项）。"""
+    """查水模型表（不存在报错，附可用清单）。"""
     m = WATER_MODELS.get(name)
     if m is None:
         raise ValueError(
-            f'water.model={name!r} 不支持。可用（一期）: '
-            f'{sorted(k for k, v in WATER_MODELS.items() if v["supported"])}'
-            f'；二期预留: '
-            f'{sorted(k for k, v in WATER_MODELS.items() if not v["supported"])}')
-    if not m['supported']:
-        raise ValueError(
-            f'water.model={name!r} 是二期预留模型（{m["desc"]}），'
-            f'本期暂不支持。一期可用: '
-            f'{sorted(k for k, v in WATER_MODELS.items() if v["supported"])}')
+            f'water.model={name!r} 不支持。可用: '
+            f'{sorted(WATER_MODELS)}')
     return m
 
 
 # ---------------------------------------------------------------- 水坐标
-def _parse_off_first_residue(off_path: str) -> list[tuple[str, str, float, float, float]]:
+def _parse_off_first_residue(off_path: str,
+                             nsite: int = 3) -> list[tuple[str, str, float, float, float]]:
     """解析 off 盒文件第一残基 → [(原子名, 元素, x, y, z), ...]。
 
     纯文本解析：atoms 表取原子名（第 1 列 "name"），positions 表前
     N 行取坐标（第一残基 = 前 N 行，N = 残基原子数）。
     与 tleap 加载的库严格一致（坐标/原子名/残基模板同一来源）。
+    nsite: 取前几个原子（3-site 水取 3；4-site 含 EPW 取 4）。
     """
     txt = open(off_path, encoding='utf-8').read()
     m_atoms = re.search(r'!entry\.\S+\.unit\.atoms table.*?\n(.*?)(?=\n!entry\.|\Z)',
@@ -112,10 +121,10 @@ def _parse_off_first_residue(off_path: str) -> list[tuple[str, str, float, float
             raise RuntimeError(f'off positions 行数不足: {off_path}')
         x, y, z = (float(v) for v in pos_lines[i].split()[:3])
         res_atoms.append((name, elem, x, y, z))
-        if len(res_atoms) == 3:
-            break   # 只取第一残基（水 3 原子；4-site 预留时取 4）
-    if len(res_atoms) < 3:
-        raise RuntimeError(f'off 第一残基原子数不足 3: {off_path}')
+        if len(res_atoms) == nsite:
+            break   # 只取第一残基前 nsite 个原子（水 3；4-site 含 EPW 取 4）
+    if len(res_atoms) < nsite:
+        raise RuntimeError(f'off 第一残基原子数不足 {nsite}: {off_path}')
     return res_atoms
 
 
@@ -205,12 +214,31 @@ def ion_type(name: str) -> dict:
 
 # ---------------------------------------------------------------- 模板 xyz
 def water_template_xyz(model: str) -> list[tuple[str, str, float, float, float]]:
-    """水模型单分子模板 → [(原子名, 元素, x, y, z), ...]（坐标来自 AmberTools off）。"""
+    """水模型单分子模板 → [(原子名, 元素, x, y, z), ...]（坐标来自 AmberTools off）。
+
+    4-site 模型返回 4 原子（O/H1/H2/EPW）：EPW 是虚拟位点，坐标保留在模板中
+    供 packmol 刚体放置；导出层会丢弃 EPW 并把电荷合并到 O（见 prmtop_to_lammps）。
+    """
     m = water_model(model)
     off = os.path.join(LIB_DIR, m['box_off'])
     if not os.path.exists(off):
         raise RuntimeError(f'找不到水模型盒文件: {off}（AmberTools 数据缺失）')
-    return _parse_off_first_residue(off)
+    return _parse_off_first_residue(off, nsite=m['nsite'])
+
+
+def water_om_distance(model: str) -> float:
+    """4-site 水 O→M(EPW) 距离（Å），从 off 模板坐标实测。
+
+    与 tleap 加载的库几何严格一致；LAMMPS pair_style lj/cut/tip4p/long 的
+    qdist 参数用此值。3-site 模型返回 None。
+    """
+    rows = water_template_xyz(model)
+    names = [r[0] for r in rows]
+    if 'EPW' not in names:
+        return None
+    io, ie = names.index('O'), names.index('EPW')
+    o, e = rows[io], rows[ie]
+    return sum((o[k] - e[k]) ** 2 for k in range(2, 5)) ** 0.5
 
 
 def ion_template_xyz(ion: str) -> list[tuple[str, str, float, float, float]]:
@@ -231,7 +259,12 @@ def write_template_xyz(rows: list[tuple[str, str, float, float, float]],
 
 
 def element_mass(elem: str) -> float:
-    """元素相对原子质量（RDKit 周期表，覆盖全部元素；密度盒估算用）。"""
+    """元素相对原子质量（RDKit 周期表，覆盖全部元素；密度盒估算用）。
+
+    'E' = 4-site 水虚拟位点 EPW 在 packmol xyz 里的元素列标识（无质量）→ 0。
+    """
+    if elem == 'E':
+        return 0.0
     from rdkit import Chem
     pt = Chem.GetPeriodicTable()
     try:

@@ -39,6 +39,24 @@ read_data {data}
 run 0
 """
 
+# 4-site 水验证模板：LAMMPS 隐式 M 方案。data 无 EP 原子，M 位点由
+# pair_style lj/cut/tip4p/long 在运行时从 O-H 几何推导（qdist = O→M 距离，
+# 各模型文献值；data 的 Masses/Atoms 里只有 O/H）。必须配 kspace_style pppm。
+LAMMPS_IN_TEMPLATE_TIP4P = """units real
+atom_style full
+boundary p p p
+pair_style lj/cut/tip4p/long 10.0 {qdist}
+pair_modify mix arithmetic
+bond_style harmonic
+angle_style harmonic
+dihedral_style fourier
+improper_style cvff
+special_bonds amber
+kspace_style pppm 1e-4
+read_data {data}
+run 0
+"""
+
 
 def run_pipeline(cfg: Config) -> dict:
     """执行整条流水线，返回报告 dict（同时写入 workdir/check_report.txt）。"""
@@ -668,8 +686,17 @@ def _write_report(report: dict) -> None:
                   f'box={cfg.packmol.box} tolerance={cfg.packmol.tolerance} '
                   f'seed={cfg.packmol.seed}']
         if cfg.water is not None:
-            lines += [f'- 水溶剂: {cfg.water.model} × {cfg.water.count}'
-                      f'（AmberTools 内置模板, leaprc.water.{cfg.water.model}）']
+            from solvent_templates import water_model
+            wm = water_model(cfg.water.model)
+            if wm['nsite'] == 4:
+                lines += [f'- 水溶剂: {cfg.water.model} × {cfg.water.count}'
+                          f'（4-site，LAMMPS 隐式 M 方案；leaprc: '
+                          + ('getlmp 内置（AmberTools 无经典 TIP4P）'
+                             if wm.get('custom_leaprc')
+                             else f'leaprc.water.{cfg.water.model}') + '）']
+            else:
+                lines += [f'- 水溶剂: {cfg.water.model} × {cfg.water.count}'
+                          f'（AmberTools 内置模板, leaprc.water.{cfg.water.model}）']
         if cfg.ions:
             lines += ['- 离子（atomic_ions.lib）: '
                       + ', '.join(f'{ic.name} × {ic.count}' for ic in cfg.ions)]
@@ -686,6 +713,17 @@ def _write_report(report: dict) -> None:
         lines += [f'- 水密度（按 Masses×数量/盒体积 估算）: {rho:.3f} g/cm³'
                   f'（常温液态水参考 ~0.997）' if rho else
                   '- 水密度: 盒信息不足，跳过']
+        if info.get('ep_removed'):
+            from solvent_templates import water_model, water_om_distance
+            wm = water_model(cfg.water.model)
+            om_off = water_om_distance(cfg.water.model)
+            lines += [f'- 4-site 虚拟位点: 丢弃 EPW {info["ep_removed"]} 个'
+                      f'（负电荷已合并到 O，总电荷不变）',
+                      f'- O→M 距离: LAMMPS qdist={wm["om_dist"]:.4f} Å（文献）'
+                      f'，off 模板实测 {om_off:.4f} Å'
+                      + ('；注意 AmberTools 盒文件 EPW 放置与文献值有偏差，'
+                         'LAMMPS 用文献 qdist 推导 M 位点'
+                         if abs(wm['om_dist'] - om_off) > 0.005 else '')]
     if cfg.ions:
         lines += ['- 离子 LJ 参数（data.lmp Pair Coeffs，可与文献核对）:']
         for row in _pair_coeffs_table(exp['data_lmp']):
@@ -725,7 +763,21 @@ def _write_report(report: dict) -> None:
         '## LAMMPS 实跑验证（可选，建议集群跑）',
         '本机无 LAMMPS；将 data.lmp 交给 OpsAgent 代跑或自行在集群执行：',
         '```lammps',
-        LAMMPS_IN_TEMPLATE.format(data=os.path.basename(exp['data_lmp'])),
+    ]
+    if cfg.water is not None:
+        from solvent_templates import water_model
+        wm = water_model(cfg.water.model)
+        if wm['nsite'] == 4:
+            lines.append(LAMMPS_IN_TEMPLATE_TIP4P.format(
+                data=os.path.basename(exp['data_lmp']),
+                qdist=f'{wm["om_dist"]:.4f}'))
+        else:
+            lines.append(LAMMPS_IN_TEMPLATE.format(
+                data=os.path.basename(exp['data_lmp'])))
+    else:
+        lines.append(LAMMPS_IN_TEMPLATE.format(
+            data=os.path.basename(exp['data_lmp'])))
+    lines += [
         '```',
         '通过判据: READ_DATA_OK + run 0 无 ERROR（VERIFY_EXIT=0）。',
     ]

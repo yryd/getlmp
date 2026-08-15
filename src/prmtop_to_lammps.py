@@ -74,17 +74,40 @@ def prmtop_to_lammps(prmtop: str, inpcrd: str, out_lmp: str,
     """
     s = pmd.load_file(prmtop, inpcrd)
 
+    # ---- 0. 水 4-site 虚拟位点（EPW）预处理 -----------------------------
+    # LAMMPS 隐式 M 方案（pair_style lj/cut/tip4p/long）：M 位点在运行时由
+    # O-H 几何推导，data 文件不需要 EP 原子/键。Amber 4-site 水（TIP4P*/
+    # OPC）负电荷全在 EPW（O 电荷=0）→ 导出时把 EP 电荷合并到 O、丢弃
+    # EP 原子（键/角随之排除）。3-site 水无 EP，本段不生效。
+    ep_atoms = [a for a in s.atoms
+                if isinstance(a, pmd.ExtraPoint) or a.type == 'EP']
+    ep_bad = [a for a in ep_atoms
+              if a.residue is None or a.residue.name != 'WAT']
+    if ep_bad:
+        raise RuntimeError(
+            '体系含非水残基的虚拟位点原子（ExtraPoint/type=EP），无法导出：'
+            + ', '.join(f'{a.name}@{getattr(a.residue, "name", "?")}'
+                        for a in ep_bad))
+    ep_ids = {id(a) for a in ep_atoms}
+    if ep_atoms:
+        for ep in ep_atoms:
+            o = next(a for a in ep.residue.atoms if a.name == 'O')
+            o.charge += ep.charge   # 负电荷合并到 O（导出后总电荷不变）
+    # 原 prmtop 原子 idx → 导出 LAMMPS id（EP 跳过，后续引用重映射）
+    idx_map: dict[int, int] = {}
+    next_id = 1
+    for a in s.atoms:
+        if id(a) in ep_ids:
+            continue
+        idx_map[a.idx] = next_id
+        next_id += 1
+
     # ---- 1. 原子类型 & Masses / Pair Coeffs -------------------------------
     atom_type_names: List[str] = []   # 类型名 -> LAMMPS type id (1-based)
     type_id = {}
     for a in s.atoms:
-        # 4-site 水模型（OPC/TIP4P*）的虚拟位点（EP）：LAMMPS 无对应位置，
-        # 需要专门导出链路（二期）；本期直接报错避免静默产错 data。
-        if isinstance(a, pmd.ExtraPoint) or a.type == 'EP':
-            raise RuntimeError(
-                f'体系含 4-site 水虚拟位点（原子 {a.name!r}, type={a.type!r}）：'
-                f'LAMMPS data 导出暂不支持 EP 位点（二期 OPC/TIP4P* 预留）。'
-                f'请改用 3-site 水模型（tip3p / spce / opc3）')
+        if id(a) in ep_ids:
+            continue
         if a.type not in type_id:
             type_id[a.type] = len(atom_type_names) + 1
             atom_type_names.append(a.type)
@@ -151,7 +174,8 @@ def prmtop_to_lammps(prmtop: str, inpcrd: str, out_lmp: str,
     if box is not None:
         xlo, xhi, ylo, yhi, zlo, zhi = box
     else:
-        coords = np.array([[a.xx, a.xy, a.xz] for a in s.atoms])
+        coords = np.array([[a.xx, a.xy, a.xz] for a in s.atoms
+                           if id(a) not in ep_ids])
         lo = coords.min(axis=0) - buffer
         hi = coords.max(axis=0) + buffer
         xlo, ylo, zlo = lo
@@ -161,9 +185,20 @@ def prmtop_to_lammps(prmtop: str, inpcrd: str, out_lmp: str,
     L = []
     L.append('LAMMPS data file from getlmp (prmtop -> data.lmp)')
     L.append('')
-    natom, nbond, nangle = len(s.atoms), len(s.bonds), len(s.angles)
-    ndihedral = sum(1 for d in s.dihedrals if not d.improper)
-    nimproper = sum(1 for d in s.dihedrals if d.improper)
+    natom = len(s.atoms) - len(ep_atoms)
+    nbond = sum(1 for b in s.bonds
+                if id(b.atom1) not in ep_ids and id(b.atom2) not in ep_ids)
+    nangle = sum(1 for ag in s.angles
+                 if all(id(a) not in ep_ids
+                        for a in (ag.atom1, ag.atom2, ag.atom3)))
+    ndihedral = sum(1 for d in s.dihedrals
+                    if not d.improper
+                    and all(id(a) not in ep_ids
+                            for a in (d.atom1, d.atom2, d.atom3, d.atom4)))
+    nimproper = sum(1 for d in s.dihedrals
+                    if d.improper
+                    and all(id(a) not in ep_ids
+                            for a in (d.atom1, d.atom2, d.atom3, d.atom4)))
     L.append(f'{natom} atoms')
     L.append(f'{nbond} bonds')
     L.append(f'{nangle} angles')
@@ -222,34 +257,47 @@ def prmtop_to_lammps(prmtop: str, inpcrd: str, out_lmp: str,
     # 分子 id：按残基分组编号（Amber prmtop 无显式分子概念，残基即分子单位；
     # 同残基对象共享引用，用 (chain, number) 作键稳定；无残基信息时兜底 1）
     res_to_mol: dict = {}
-    mol_ids: list[int] = []
+    mol_ids: dict[int, int] = {}
     for a in s.atoms:
         r = a.residue
         if r is None:
-            mol_ids.append(1)
+            mol_ids[a.idx] = 1
             continue
         key = (r.chain, r.number)
         if key not in res_to_mol:
             res_to_mol[key] = len(res_to_mol) + 1
-        mol_ids.append(res_to_mol[key])
-    for i, a in enumerate(s.atoms):
-        L.append(f'{i + 1:6d} {mol_ids[i]:6d} {type_id[a.type]:4d} {a.charge:12.6f} '
-                 f'{a.xx:12.5f} {a.xy:12.5f} {a.xz:12.5f}  # {a.name} {a.residue.name}')
+        mol_ids[a.idx] = res_to_mol[key]
+    for a in s.atoms:
+        if id(a) in ep_ids:
+            continue
+        L.append(f'{idx_map[a.idx]:6d} {mol_ids[a.idx]:6d} {type_id[a.type]:4d} '
+                 f'{a.charge:12.6f} {a.xx:12.5f} {a.xy:12.5f} {a.xz:12.5f}  '
+                 f'# {a.name} {a.residue.name}')
     L.append('')
     if nbond > 0:
         L.append('Bonds')
         L.append('')
-        for i, b in enumerate(s.bonds):
+        bi = 0
+        for b in s.bonds:
+            if id(b.atom1) in ep_ids or id(b.atom2) in ep_ids:
+                continue
+            bi += 1
             key = (round(b.type.k, 6), round(b.type.req, 6))
-            L.append(f'{i + 1:6d} {bond_type_map[key]:4d} {b.atom1.idx + 1:6d} {b.atom2.idx + 1:6d}')
+            L.append(f'{bi:6d} {bond_type_map[key]:4d} '
+                     f'{idx_map[b.atom1.idx]:6d} {idx_map[b.atom2.idx]:6d}')
         L.append('')
     if nangle > 0:
         L.append('Angles')
         L.append('')
-        for i, ag in enumerate(s.angles):
+        ai = 0
+        for ag in s.angles:
+            if any(id(a) in ep_ids for a in (ag.atom1, ag.atom2, ag.atom3)):
+                continue
+            ai += 1
             key = (round(ag.type.k, 6), round(ag.type.theteq, 6))
-            L.append(f'{i + 1:6d} {angle_type_map[key]:4d} '
-                     f'{ag.atom1.idx + 1:6d} {ag.atom2.idx + 1:6d} {ag.atom3.idx + 1:6d}')
+            L.append(f'{ai:6d} {angle_type_map[key]:4d} '
+                     f'{idx_map[ag.atom1.idx]:6d} {idx_map[ag.atom2.idx]:6d} '
+                     f'{idx_map[ag.atom3.idx]:6d}')
         L.append('')
     if ndihedral > 0:
         L.append('Dihedrals')
@@ -258,10 +306,14 @@ def prmtop_to_lammps(prmtop: str, inpcrd: str, out_lmp: str,
         for d in s.dihedrals:
             if d.improper:
                 continue
+            if any(id(a) in ep_ids
+                   for a in (d.atom1, d.atom2, d.atom3, d.atom4)):
+                continue
             di += 1
             key = _canon_dihedral_key(d.atom1.type, d.atom2.type, d.atom3.type, d.atom4.type)
             L.append(f'{di:6d} {dih_type_map[key]:4d} '
-                     f'{d.atom1.idx + 1:6d} {d.atom2.idx + 1:6d} {d.atom3.idx + 1:6d} {d.atom4.idx + 1:6d}')
+                     f'{idx_map[d.atom1.idx]:6d} {idx_map[d.atom2.idx]:6d} '
+                     f'{idx_map[d.atom3.idx]:6d} {idx_map[d.atom4.idx]:6d}')
         L.append('')
     if nimproper > 0:
         # 注意：header 声明 0 impropers 时不允许出现 Impropers 段（哪怕为空），
@@ -272,13 +324,17 @@ def prmtop_to_lammps(prmtop: str, inpcrd: str, out_lmp: str,
         for d in s.dihedrals:
             if not d.improper:
                 continue
+            if any(id(a) in ep_ids
+                   for a in (d.atom1, d.atom2, d.atom3, d.atom4)):
+                continue
             ii += 1
             key = _canon_dihedral_key(d.atom1.type, d.atom2.type, d.atom3.type, d.atom4.type)
             # LAMMPS cvff improper: 中心原子是第 1 个；Amber 中心是第 2 个(j)
             # Amber 记录 (i,j,k,l) 中心=j；cvff 期望中心在前 → 写为 (j,i,k,l)
             a1, a2, a3, a4 = d.atom1, d.atom2, d.atom3, d.atom4
             L.append(f'{ii:6d} {imp_type_map[key]:4d} '
-                     f'{a2.idx + 1:6d} {a1.idx + 1:6d} {a3.idx + 1:6d} {a4.idx + 1:6d}')
+                     f'{idx_map[a2.idx]:6d} {idx_map[a1.idx]:6d} '
+                     f'{idx_map[a3.idx]:6d} {idx_map[a4.idx]:6d}')
         L.append('')
 
     with open(out_lmp, 'w') as f:
@@ -291,7 +347,9 @@ def prmtop_to_lammps(prmtop: str, inpcrd: str, out_lmp: str,
         'natom_type': len(atom_type_names), 'nbond_type': len(bond_types),
         'nangle_type': len(angle_types), 'ndihedral_type': len(dih_fourier),
         'nimproper_type': len(imp_cvff),
-        'total_charge': round(sum(a.charge for a in s.atoms), 6),
+        'total_charge': round(sum(a.charge for a in s.atoms
+                                  if id(a) not in ep_ids), 6),
+        'ep_removed': len(ep_atoms),
         'box': [xlo, xhi, ylo, yhi, zlo, zhi],
     }
     return info

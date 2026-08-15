@@ -33,7 +33,8 @@ class WaterCfg:
 
     yaml 写法：
       water:
-        model: tip3p        # 一期: tip3p / spce / opc3（二期: opc/tip4pew/tip4pd 预留）
+        model: tip3p        # tip3p / spce / opc3（3-site）；tip4p / tip4pew /
+                            # tip4pd / opc（4-site，LAMMPS 隐式 M 方案）
         count: 3000         # 水分子数（数量，不做浓度）
     出现即强制多分子 packmol 装盒。
     """
@@ -257,8 +258,8 @@ def load_config(path: str) -> Config:
         from solvent_templates import water_model   # 查表（含二期拦截）
         model = str(wt.get('model', '')).strip()
         if not model:
-            raise ValueError('water.model 不能为空（一期: tip3p / spce / opc3）')
-        wm = water_model(model)   # 不存在/二期预留 → 报错
+            raise ValueError('water.model 不能为空（tip3p / spce / opc3 / tip4p / tip4pew / tip4pd / opc）')
+        wm = water_model(model)   # 不存在 → 报错
         count = int(wt.get('count', 0))
         if count <= 0:
             raise ValueError(f'water.count 需为正整数（分子数），当前 {count!r}')

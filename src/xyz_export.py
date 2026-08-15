@@ -42,25 +42,35 @@ def export_system_xyz(report: dict, out_path: str) -> int:
 
     # GAFF2：统一从 prmtop/inpcrd（tleap 重排后顺序 = data.lmp 顺序）
     sysr = report['system']
-    elements = _prmtop_elements(sysr['prmtop'])
-    coords = _read_inpcrd_coords(sysr['inpcrd'], len(elements))
+    elements, ep_flags = _prmtop_elements(sysr['prmtop'])
+    coords = _read_inpcrd_coords(sysr['inpcrd'], len(ep_flags), skip=ep_flags)
     return _write_xyz(out_path, elements, coords,
                       f'from getlmp ({cfg.forcefield}) {cfg.name}')
 
 
-def _prmtop_elements(prmtop: str) -> list[str]:
-    """prmtop 原子名 → 元素（顺序 = prmtop 原子顺序 = data.lmp 顺序）。"""
+def _prmtop_elements(prmtop: str) -> tuple[list[str], list[bool]]:
+    """prmtop 原子名 → 元素（顺序 = prmtop 原子顺序 = data.lmp 顺序）。
+
+    返回 (非 EP 元素列表, EP 掩码)：4-site 水的 EPW 虚拟位点（type=EP）
+    与导出层一致地跳过（LAMMPS data 无 EP 原子，system.xyz 须与 data.lmp
+    原子顺序一致）。掩码长度 = prmtop 原子数，True=EP。
+    """
     from rdkit import Chem
     pt = Chem.GetPeriodicTable()
     s = pmd.load_file(prmtop)
     elements: list[str] = []
+    ep_flags: list[bool] = []
     for a in s.atoms:
+        if isinstance(a, pmd.ExtraPoint) or a.type == 'EP':
+            ep_flags.append(True)
+            continue
+        ep_flags.append(False)
         sym = _element_from_atom_name(a.name)
         z = pt.GetAtomicNumber(sym)
         if z == 0:
             raise RuntimeError(f'无法从原子名推断元素: {a.name!r} ({prmtop})')
         elements.append(pt.GetElementSymbol(z))
-    return elements
+    return elements, ep_flags
 
 
 def _element_from_atom_name(name: str) -> str:
@@ -83,10 +93,12 @@ def _write_xyz(path: str, elements: list[str], coords: list[list[float]],
     return len(elements)
 
 
-def _read_inpcrd_coords(inpcrd: str, natom: int) -> list[list[float]]:
+def _read_inpcrd_coords(inpcrd: str, natom_total: int,
+                        skip: list[bool] | None = None) -> list[list[float]]:
     """读 Amber inpcrd 坐标（第 1 行标题，第 2 行 natom，之后每行 6 个 12.7f 值）。
 
-    只取前 natom*3 个数值（防行 2 出现盒信息等额外字段）。
+    skip: 按原子位跳过坐标（4-site 水 EP 虚拟位点，与 data.lmp 一致），
+    长度 = natom_total，True=跳过。返回非 EP 坐标，顺序与 data.lmp 一致。
     """
     with open(inpcrd) as f:
         lines = f.read().splitlines()
@@ -97,10 +109,11 @@ def _read_inpcrd_coords(inpcrd: str, natom: int) -> list[list[float]]:
                 vals.append(float(v))
             except ValueError:
                 continue
-            if len(vals) >= natom * 3:
-                break
-        if len(vals) >= natom * 3:
-            break
-    if len(vals) < natom * 3:
-        raise RuntimeError(f'inpcrd 坐标数不足: {len(vals)} < {natom * 3} ({inpcrd})')
-    return [[vals[i], vals[i + 1], vals[i + 2]] for i in range(0, natom * 3, 3)]
+    if len(vals) < natom_total * 3:
+        raise RuntimeError(f'inpcrd 坐标数不足: {len(vals)} < {natom_total * 3} '
+                           f'({inpcrd})')
+    coords_all = [[vals[i], vals[i + 1], vals[i + 2]]
+                  for i in range(0, natom_total * 3, 3)]
+    if skip is None:
+        return coords_all
+    return [c for c, s in zip(coords_all, skip) if not s]

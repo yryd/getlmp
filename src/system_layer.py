@@ -186,6 +186,121 @@ def _mol2_to_prepi(mol2: str, prepi: str, cwd: str) -> None:
          cwd, f'antechamber({os.path.basename(prepi)})')
 
 
+# 经典 TIP4P 水（AmberTools 无 leaprc.water.tip4p，getlmp 内置）：
+# 残基 TP4（solvents.lib 单残基模板，经典 TIP4P 电荷 0.52/-1.04、M 距 O 0.15 Å）
+# + 参数 frcmod.tip4p；离子参数沿用 JC_TIP3P
+# 近似（TIP4P 无专门离子参数集，与一期 TIP4P/水 3-site 方案一致）。
+# 注意：勿用 TIP4PBOX（216 水盒子模板）——loadpdb 会整盒复制导致原子数暴增。
+# addAtomTypes 离子列表照抄 leaprc.water.tip4pew（loadpdb 需类型→元素映射）。
+#
+# 注意：AmberTools 的 frcmod.tip4p 只有 OW-EP 键，没有 OW-HW / HW-HW 键参数
+# （TIP4P-Ew/OPC 等的 frcmod 均有 OW-HW 553.0/0.9572 与 HW-HW 553.0/1.5136）
+# → 需 getlmp 内置补充 frcmod，否则 tleap 报 "Could not find bond parameter
+# OW-HW / HW-HW" 且 saveamberparm 失败（prmtop 不生成）。
+# HW-HW 是 TIP4PBOX 模板 connectivity 自带键（H1-H2），ParmEd 修复阶段会删。
+_TIP4P_OWHW_FRCMOD = '''\
+This is getlmp additional parameters for classic TIP4P water (OW-HW/HW-HW bonds; AmberTools frcmod.tip4p missing them)
+MASS
+
+BOND
+OW-HW   553.000   0.9572
+HW-HW   553.000   1.5136
+
+ANGLE
+
+DIHE
+
+NONBON
+
+'''
+
+_TIP4P_LEAPRC = '''\
+# getlmp 内置：经典 TIP4P（AmberTools 无 leaprc.water.tip4p）
+addAtomTypes {
+\t{ "OW"   "O"  "sp3" }
+\t{ "HW"   "H"  "sp3" }
+\t{ "EP"   ""   "sp3" }
+\t{ "F-"   "F"  "sp3" }
+\t{ "Cl-"  "Cl" "sp3" }
+\t{ "Br-"  "Br" "sp3" }
+\t{ "I-"   "I"  "sp3" }
+\t{ "Li+"  "Li" "sp3" }
+\t{ "Na+"  "Na" "sp3" }
+\t{ "K+"   "K"  "sp3" }
+\t{ "Rb+"  "Rb" "sp3" }
+\t{ "Cs+"  "Cs" "sp3" }
+\t{ "Mg+"  "Mg" "sp3" }
+\t{ "Tl+"  "Tl" "sp3" }
+\t{ "Cu+"  "Cu" "sp3" }
+\t{ "Ag+"  "Ag" "sp3" }
+\t{ "Be2+" "Be" "sp3" }
+\t{ "Cu2+" "Cu" "sp3" }
+\t{ "Ni2+" "Ni" "sp3" }
+\t{ "Pt2+" "Pt" "sp3" }
+\t{ "Zn2+" "Zn" "sp3" }
+\t{ "Co2+" "Co" "sp3" }
+\t{ "Pd2+" "Pd" "sp3" }
+\t{ "Ag2+" "Ag" "sp3" }
+\t{ "Cr2+" "Cr" "sp3" }
+\t{ "Fe2+" "Fe" "sp3" }
+\t{ "Mg2+" "Mg" "sp3" }
+\t{ "V2+"  "V"  "sp3" }
+\t{ "Mn2+" "Mn" "sp3" }
+\t{ "Hg2+" "Hg" "sp3" }
+\t{ "Cd2+" "Cd" "sp3" }
+\t{ "Yb2+" "Yb" "sp3" }
+\t{ "Ca2+" "Ca" "sp3" }
+\t{ "Sn2+" "Sn" "sp3" }
+\t{ "Pb2+" "Pb" "sp3" }
+\t{ "Eu2+" "Eu" "sp3" }
+\t{ "Sr2+" "Sr" "sp3" }
+\t{ "Sm2+" "Sm" "sp3" }
+\t{ "Ba2+" "Ba" "sp3" }
+\t{ "Ra2+" "Ra" "sp3" }
+\t{ "Al3+" "Al" "sp3" }
+\t{ "Fe3+" "Fe" "sp3" }
+\t{ "Cr3+" "Cr" "sp3" }
+\t{ "In3+" "In" "sp3" }
+\t{ "Tl3+" "Tl" "sp3" }
+\t{ "Y3+"  "Y"  "sp3" }
+\t{ "La3+" "La" "sp3" }
+\t{ "Ce3+" "Ce" "sp3" }
+\t{ "Pr3+" "Pr" "sp3" }
+\t{ "Nd3+" "Nd" "sp3" }
+\t{ "Sm3+" "Sm" "sp3" }
+\t{ "Eu3+" "Eu" "sp3" }
+\t{ "Gd3+" "Gd" "sp3" }
+\t{ "Tb3+" "Tb" "sp3" }
+\t{ "Dy3+" "Dy" "sp3" }
+\t{ "Er3+" "Er" "sp3" }
+\t{ "Tm3+" "Tm" "sp3" }
+\t{ "Lu3+" "Lu" "sp3" }
+\t{ "Hf4+" "Hf" "sp3" }
+\t{ "Zr4+" "Zr" "sp3" }
+\t{ "Ce4+" "Ce" "sp3" }
+\t{ "U4+"  "U"  "sp3" }
+\t{ "Pu4+" "Pu" "sp3" }
+\t{ "Th4+" "Th" "sp3" }
+}
+loadOff atomic_ions.lib
+loadOff solvents.lib
+WAT = TP4
+loadAmberParams frcmod.tip4p
+loadAmberParams frcmod.tip4p_owhw
+loadAmberParams frcmod.ionsjc_tip3p
+loadAmberParams frcmod.ions234lm_1264_tip3p
+'''
+
+
+def _write_tip4p_leaprc(path: str) -> None:
+    """写出 getlmp 内置经典 TIP4P leaprc + 补充 frcmod（AmberTools 无现成）。"""
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(_TIP4P_LEAPRC)
+    frcmod = os.path.join(os.path.dirname(path), 'frcmod.tip4p_owhw')
+    with open(frcmod, 'w', encoding='utf-8') as f:
+        f.write(_TIP4P_OWHW_FRCMOD)
+
+
 def _fix_water_topology(prmtop: str, inpcrd: str, model: str) -> dict:
     """修复水分子拓扑（AmberTools 水模板无 connect/angle，loadpdb 需校正）。
 
@@ -207,11 +322,14 @@ def _fix_water_topology(prmtop: str, inpcrd: str, model: str) -> dict:
     s = pmd.load_file(prmtop, inpcrd)
     stat = {'bonds_removed': 0, 'bonds_added': 0, 'angles_added': 0}
 
-    # 1) 删 WAT 残基内 H1-H2 键
+    # 1) 删 WAT 残基内误建键：
+    #    - H1-H2（自动键合误建，H-H 距离 1.51 Å 落入阈值）
+    #    - O-EPW（4-site 虚拟位点键；LAMMPS 隐式 M 方案不需要 EP 原子/键，
+    #      导出层会丢弃 EPW 并把电荷合并到 O）
     for b in list(s.bonds):
         a1, a2 = b.atom1, b.atom2
         if (a1.residue.name == 'WAT' and a2.residue.name == 'WAT'
-                and {a1.name, a2.name} == {'H1', 'H2'}):
+                and {a1.name, a2.name} in ({'H1', 'H2'}, {'O', 'EPW'})):
             s.bonds.remove(b)
             stat['bonds_removed'] += 1
 
@@ -278,12 +396,15 @@ def build_system_multi(cfg: Config, workdir: str, mol2_list: list[str],
         _mol2_to_prepi(mol2, prepi, workdir)
         prepi_list.append(prepi)
 
-    # 水模型 leaprc（若含水的模板类型；水模型决定配水离子参数 frcmod.ions*）
+    # 水模型 leaprc（若含水的模板类型；水模型决定配水离子参数 frcmod.ions*；
+    # 经典 TIP4P 无现成 leaprc → getlmp 内置生成）
     water_leaprc = None
+    water_model_name = None
     for ex in (extras or []):
         if ex['kind'] == 'water':
             from solvent_templates import water_model
-            water_leaprc = water_model(ex['model'])['leaprc']
+            water_model_name = ex['model']
+            water_leaprc = water_model(water_model_name)['leaprc']
             break
 
     name = cfg.name
@@ -294,7 +415,13 @@ def build_system_multi(cfg: Config, workdir: str, mol2_list: list[str],
     with open(tleap_in, 'w') as f:
         f.write(f'source {_leaprc(cfg.forcefield)}\n')
         if water_leaprc:
-            f.write(f'source {water_leaprc}\n')
+            wm = water_model(water_model_name)
+            if wm.get('custom_leaprc'):
+                custom = os.path.join(workdir, 'leaprc.water.tip4p')
+                _write_tip4p_leaprc(custom)
+                f.write(f'source {os.path.basename(custom)}\n')
+            else:
+                f.write(f'source {water_leaprc}\n')
         for prepi in prepi_list:
             f.write(f'loadamberprep {os.path.basename(prepi)}\n')
         for x in frcmod_list:
@@ -304,7 +431,9 @@ def build_system_multi(cfg: Config, workdir: str, mol2_list: list[str],
         f.write('quit\n')
 
     print(f'== 体系层: tleap loadpdb (leaprc={_leaprc(cfg.forcefield)}'
-          + (f' + {water_leaprc}' if water_leaprc else '') + ') ==')
+          + (f' + {water_leaprc}'
+             + (' [getlmp 内置]' if water_leaprc and water_model(water_model_name).get('custom_leaprc') else '')
+             if water_leaprc else '') + ') ==')
     _run(['tleap', '-f', os.path.basename(tleap_in)], workdir, 'tleap')
     print(f'  tleap → {os.path.relpath(prmtop)} / {os.path.relpath(inpcrd)}')
 
@@ -313,10 +442,11 @@ def build_system_multi(cfg: Config, workdir: str, mol2_list: list[str],
     if water_leaprc:
         model = next(ex['model'] for ex in (extras or []) if ex['kind'] == 'water')
         water_fix = _fix_water_topology(prmtop, inpcrd, model)
-        print(f'  水拓扑修复: 删 H-H 键 {water_fix["bonds_removed"]}, '
+        wm = water_model(model)
+        print(f'  水拓扑修复: 删误建键 {water_fix["bonds_removed"]}, '
               f'补 O-H 键 {water_fix["bonds_added"]}, '
               f'补 H-O-H 角 {water_fix["angles_added"]}'
-              f'（角参数 HW-OW-HW k={water_model(model)["angle_k"]:g} '
-              f'θeq={water_model(model)["angle_theta"]:g}°）')
+              f'（角参数 HW-OW-HW k={wm["angle_k"]:g} '
+              f'θeq={wm["angle_theta"]:g}°）')
     return {'prmtop': prmtop, 'inpcrd': inpcrd, 'pdb': packed_pdb,
             'water_fix': water_fix}

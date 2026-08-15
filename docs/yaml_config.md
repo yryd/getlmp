@@ -30,7 +30,7 @@ molecules:
     name: PIP
     count: 20
 water:
-  model: tip3p       # tip3p / spce / opc3（二期: opc / tip4pew / tip4pd）
+  model: tip3p       # tip3p / spce / opc3 / opc / tip4pew / tip4pd / tip4p
   count: 800
 ions:
   - name: Na+
@@ -136,21 +136,23 @@ molecules:
 
 ```yaml
 water:
-  model: tip3p    # 一期可用: tip3p / spce / opc3；二期预留: opc / tip4pew / tip4pd
+  model: tip3p    # 3-site: tip3p / spce / opc3；4-site: opc / tip4pew / tip4pd / tip4p
   count: 3000     # 水分子数
 ```
 
 | 键 | 类型 | 默认 | 说明 |
 |----|------|------|------|
-| `model` | str | **必填** | 水模型。**一期（3-site）**：`tip3p`（经典默认）/ `spce` / `opc3`；**二期预留（4-site）**：`opc` / `tip4pew` / `tip4pd`——填了会直接报错提示（4-site 含虚拟位点 EP，LAMMPS data 导出需专门链路，二期实现） |
+| `model` | str | **必填** | 水模型。**3-site**：`tip3p`（经典默认）/ `spce` / `opc3`；**4-site**：`opc` / `tip4pew` / `tip4pd` / `tip4p`（经典 TIP4P，getlmp 内置）。4-site 含虚拟位点 EPW，导出 data.lmp 时采用 **LAMMPS 隐式 M 方案**：EPW 原子丢弃、电荷并入 O，报告给出 `pair_style lj/cut/tip4p/long` 建议与 qdist |
 | `count` | int | **必填** | 水分子数 |
 
 **实现要点**（对模拟的影响）：
 - 水模型由 tleap 的 `leaprc.water.{model}` 加载（键长/角/电荷/LJ 全来自 AmberTools）；
+  经典 `tip4p` 无现成 leaprc → getlmp 内置生成（solvents.lib 的 TP4 单残基模板 +
+  补充 frcmod.tip4p_owhw，见 dev_notes §13）；
 - 水坐标从对应 box off 库解析（packmol 装盒用），与 tleap 加载的库严格一致；
 - 水分子无 O-H 键/角定义（刚性模型 + SETTLE），导出 data.lmp 时**自动补**键角：
-  TIP3P 角 k=100 θ=104.52°；SPC/E θ=109.47°；OPC3 θ=109.43°（各模型文献标准值，
-  跑刚性水模拟用 `fix rigid/settle` 时角参数被忽略）；
+  TIP3P 角 k=100 θ=104.52°；SPC/E θ=109.47°；OPC3 θ=109.43°；4-site 各模型取
+  文献标准值（各模型 qdist 见表，跑刚性水模拟用 `fix rigid/settle` 时角参数被忽略）；
 - 数据流：`packmol 装水（模板坐标）→ loadpdb → tleap 按水模板分配类型/电荷 → data.lmp`，
   电荷自动平衡（每分子 O=-2qH），无需 `net_charge` 参与。
 
@@ -286,7 +288,7 @@ packmol:
 | `packmol.box` | 必须 6 个数 |
 | `molecules[].smiles/xyz` | 二选一必填（同时给或都不给报错） |
 | `molecules` 段 | 可省略——当且仅当配置了 `water` 或 `ions`（纯溶剂/离子体系） |
-| `water.model` | 一期 `tip3p`/`spce`/`opc3`；二期预留 `opc`/`tip4pew`/`tip4pd`（直接报错提示） |
+| `water.model` | 3-site `tip3p`/`spce`/`opc3`；4-site `opc`/`tip4pew`/`tip4pd`/`tip4p`（经典，getlmp 内置） |
 | `ions[].name` | 必须是 `atomic_ions.lib` 中的单原子类型（运行时扫描校验） |
 | `water` / `ions` 出现 | 强制多分子路径（packmol 装盒 + tleap loadpdb），即使所有 count=1 |
 

@@ -45,12 +45,18 @@ def validate_export(cfg: Config, result: dict, natom_input: int,
         ok = False
         msgs.append(f'电荷守恒: sum={info["total_charge"]:.6f} != 净电荷={cfg.net_charge} 失败')
 
-    # 2) 原子数守恒（分子层含氢原子数）
-    if info['natom'] == natom_input:
-        msgs.append(f'原子数守恒: {info["natom"]} == 分子层 {natom_input} 通过')
+    # 2) 原子数守恒（分子层含氢原子数；4-site 水 EP 虚拟位点在导出层已
+    #    丢弃并合并电荷 → 期望 = 分子层原子数 - EP 数）
+    ep_removed = info.get('ep_removed', 0)
+    natom_expect = natom_input - ep_removed
+    ep_note = f'（-{ep_removed} EP 虚拟位点）' if ep_removed else ''
+    if info['natom'] == natom_expect:
+        msgs.append(f'原子数守恒: {info["natom"]} == 分子层 {natom_input}'
+                    f'{ep_note} 通过')
     else:
         ok = False
-        msgs.append(f'原子数不一致: data={info["natom"]} 分子层={natom_input} 失败')
+        msgs.append(f'原子数不一致: data={info["natom"]} 分子层={natom_input}'
+                    f'{ep_note} 失败')
 
     # 3) 段计数（头部 vs 实际）
     for key in ('atoms', 'bonds', 'angles', 'dihedrals', 'impropers'):

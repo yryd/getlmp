@@ -187,8 +187,6 @@ AmberTools 26 已内置 `BCCPARM_ABCG2.DAT` / `ATOMTYPE_ABCG2.DEF`（conda 环�
 ## 7. 后续方向 / 待办（2026-08-15 整理）
 
 **未实现（候选，按优先级）**：
-- **4-site 水二期（OPC / TIP4P-Ew / TIP4P-D）**：EP 虚位点导出（config/export 双层
-  拦截已留接口，见 §11）。一期只做 TIP3P/SPC/E/OPC3 + 单原子离子。
 - **packmol slab / interface 预设**：slab（双板夹层，GO 夹层接枝）与 interface
   （两相界面，TTSBI-三聚氰氯）的 inp 生成规则、用户可改/不可改字段的设计见
   git 历史中的 `smi2data_plan.md`（3.1 节）。
@@ -328,3 +326,47 @@ data 文件**没有** Special Bonds 段——`read_data` 官方文档的 section
 
 **getlmp 现状**：验证模板（pipeline.py `LAMMPS_IN_TEMPLATE`）已含 `special_bonds amber`；
 README FAQ 已加必读提醒。data.lmp 不带该信息**不是缺陷**（LAMMPS 设计如此）。
+
+
+## 13. 4-site 水二期（2026-08-15 实现，T10-T13 验证通过）
+
+**需求**（博士拍板，二期范围）：yaml `water.model` 支持 4-site 水：`tip4pew` /
+`tip4p`（经典）/ `tip4pd` / `opc`；LAMMPS 采用**隐式 M 方案**（EP 虚位点不导出，
+电荷并入 O；`pair_style lj/cut/tip4p/long` + qdist 在报告中给出）。
+
+**模型与模板来源**：
+
+| model | 电荷（H / M） | qdist (Å) | 模板来源 |
+|---|---|---|---|
+| tip4pew | 0.52422 / -1.04844 | 0.1250 | AmberTools leaprc.water.tip4pew（标准） |
+| tip4p（经典） | 0.52 / -1.04 | 0.1500 | getlmp 内置 leaprc（AmberTools 无） |
+| tip4pd | 0.58 / -1.16 | 0.1546 | AmberTools leaprc.water.tip4pd（标准） |
+| opc | 0.6791 / -1.3582 | 0.1594 | AmberTools leaprc.water.opc（标准） |
+
+**经典 TIP4P 内置方案**（`system_layer._TIP4P_LEAPRC` + `_TIP4P_OWHW_FRCMOD`）：
+AmberTools 无 `leaprc.water.tip4p`（只有 tip4pew/tip4pd），getlmp 内置生成：
+`addAtomTypes`（离子表照抄 tip4pew）+ `loadOff solvents.lib` + `loadAmberParams
+frcmod.tip4p` + 补充 `frcmod.tip4p_owhw`。
+
+**坑（实测踩过，均已修复）**：
+1. **`WAT` 必须指向单残基模板 `TP4`，不能是盒子 `TIP4PBOX`**：`WAT = TIP4PBOX`
+   时 loadpdb 把整个 216 水盒子当作模板复制 N 次 → 原子数暴增 216 倍
+   （4 水变 864 水）。solvents.lib 的单残基名：TP3（TIP3P）/ TP4（经典 TIP4P）/
+   T4E（TIP4P-Ew）/ TP5（TIP5P）。
+2. **frcmod.tip4p 只有 `OW-EP 553.0 0.150`，缺 OW-HW 与 HW-HW**：TP4 模板
+   connectivity 含 H1-H2 键，tleap saveamberparm 需要 HW-HW 参数，否则
+   `Could not find bond parameter HW-HW`（Errors=864，prmtop 不生成）。
+   getlmp 补充 frcmod 必须含 `OW-HW 553.0 0.9572` + `HW-HW 553.0 1.5136`
+   （与 tip4pd/tip3p 一致）；H1-H2 键随后由 _fix_water_topology 删除。
+3. **TP4 的 M 点位置** (0.091812, 0.118619, 0) 距 O 恰 0.15 Å（经典 TIP4P 正确值），
+   qdist 报告取 0.1500。
+4. **EP 导出**：`prmtop_to_lammps` 丢弃 EPW 原子，电荷并入 O；键角修复
+   （删 O-EPW / H1-H2，补 O-H 与 H-O-H 角）由 `_fix_water_topology` 统一处理
+   （3-site 与 4-site 共用）。
+
+**验证（tests/test_water_4site.py，4/4 通过）**：
+- T10 tip4pew + 甲烷：65 atoms（EP 丢弃后）全过。
+- T11 tip4p（经典，getlmp 内置分支）：65 atoms / 44 bonds / 26 angles 全过。
+- T12 tip4pd + Na+/Cl- 各 2：69 atoms 全过（离子配 4-site 水链路）。
+- T13 opc：65 atoms 全过。
+- 一期回归 tests/test_build_systems.py 4/4 通过（无破坏）。
