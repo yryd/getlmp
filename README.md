@@ -292,6 +292,12 @@ data 的原子类型号 = `reax_elements` 列表顺序（默认 C H O N S P F Cl
 能。GAFF2 输出为 `atom_style full` 完整 data；ReaxFF 输出为 `atom_style charge`
 极简 data（Masses + Atoms）。两者都有配套的 LAMMPS 验证模板（见检查报告）。
 
+> ⚠️ **GAFF/Amber 力场必读**：`special_bonds` 只由 in 脚本控制（LAMMPS data 文件
+> 没有 Special Bonds 段，`read_data` 不支持）。data.lmp 本身不含 1-4 缩放信息，
+> LAMMPS 默认 `special_bonds 0 0 0`（1-4 全屏蔽）。跑 GAFF2 体系时 in 脚本**必须写**
+> `special_bonds amber`（等价 `lj 0.0 0.0 0.5` + `coul 0.0 0.0 0.8333`，
+> 对应 Amber SCEE=1.2 / SCNB=2.0），否则 1-4 非键相互作用被错误屏蔽，能量与构象偏离。
+
 ---
 
 ## Contributing（开发）

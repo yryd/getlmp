@@ -183,15 +183,15 @@ AmberTools 26 已内置 `BCCPARM_ABCG2.DAT` / `ATOMTYPE_ABCG2.DEF`（conda 环�
 `$CONDA_PREFIX/dat/antechamber/` 下），`antechamber -c abcg2 -at gaff2` 直接可用，
 无需补拷文件。乙醇验证：GAFF2 类型正确（c3/oh/hc/h1/ho），电荷守恒（sum=0.000001）。
 
-## 7. 后续方向（未实现）
+## 7. 后续方向 / 待办（2026-08-15 整理）
 
+**未实现（候选，按优先级）**：
+- **4-site 水二期（OPC / TIP4P-Ew / TIP4P-D）**：EP 虚位点导出（config/export 双层
+  拦截已留接口，见 §11）。一期只做 TIP3P/SPC/E/OPC3 + 单原子离子。
 - **packmol slab / interface 预设**：slab（双板夹层，GO 夹层接枝）与 interface
   （两相界面，TTSBI-三聚氰氯）的 inp 生成规则、用户可改/不可改字段的设计见
   git 历史中的 `smi2data_plan.md`（3.1 节）。
-- **RESP 严格等价约束**：Multiwfn 7→18→5 支持 eqvcons，可对高对称分子施加
-  严格原子等价（当前近似等价已满足物理需求，属可选增强）。
-- **多构象 RESP**：Multiwfn 支持多构象拟合（7→18→-1 加载构象列表），
-  适合柔性分子；当前单构象。
+
 
 ## 8. 交付约定
 
@@ -311,3 +311,19 @@ atomic_ions.lib 扫描）、`src/config.py`（water/ions/xyz 段校验）、`src
    导出 data 前必须删 H-H 键、补 O-H 键与 H-O-H 角（见上）。
 2. `$LEAPRC` 在 tleap 脚本内不展开（非 shell 变量），off 路径必须写绝对路径。
 3. parmed 读 mol2 的 atomic_number 对 Cl 错识别成 C（历史坑），元素推断一律原子名优先。
+
+
+## 12. special_bonds 澄清：in 脚本设置，data 文件不支持（2026-08-15）
+
+**结论**：LAMMPS 的 `special_bonds`（1-2/1-3/1-4 非键缩放）**只能由 in 脚本命令设置**。
+data 文件**没有** Special Bonds 段——`read_data` 官方文档的 section 列表不含该项；
+若写入会报 `Invalid data file section`（与阶段 1 空 Impropers 段同类坑）。
+`molecule` 命令的**单分子模板文件**才有 Special Bond Counts / Special Bonds 可选段
+（不写时 LAMMPS 自动生成），两者文件格式不同，勿混淆。
+
+**GAFF/Amber 正确用法**：in 脚本必须写 `special_bonds amber`
+（等价 `lj 0.0 0.0 0.5` + `coul 0.0 0.0 0.8333`，对应 prmtop SCEE=1.2 / SCNB=2.0），
+否则 LAMMPS 默认 `special_bonds 0 0 0`（1-4 全屏蔽）→ 分子内能量错误。
+
+**getlmp 现状**：验证模板（pipeline.py `LAMMPS_IN_TEMPLATE`）已含 `special_bonds amber`；
+README FAQ 已加必读提醒。data.lmp 不带该信息**不是缺陷**（LAMMPS 设计如此）。
