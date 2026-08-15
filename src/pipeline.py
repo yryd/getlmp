@@ -39,23 +39,10 @@ read_data {data}
 run 0
 """
 
-# 4-site 水验证模板：LAMMPS 隐式 M 方案。data 无 EP 原子，M 位点由
-# pair_style lj/cut/tip4p/long 在运行时从 O-H 几何推导（qdist = O→M 距离，
-# 各模型文献值；data 的 Masses/Atoms 里只有 O/H）。必须配 kspace_style pppm。
-LAMMPS_IN_TEMPLATE_TIP4P = """units real
-atom_style full
-boundary p p p
-pair_style lj/cut/tip4p/long 10.0 {qdist}
-pair_modify mix arithmetic
-bond_style harmonic
-angle_style harmonic
-dihedral_style fourier
-improper_style cvff
-special_bonds amber
-kspace_style pppm 1e-4
-read_data {data}
-run 0
-"""
+# 4-site 水的 LAMMPS in 示例固定放 examples/water_4site_lammps_test/<model>/in.<model>.lmp
+# （类型号与配套 data.lmp 绑定：该测试体系 O=3/H=4、O-H 键 type=2、H-O-H 角 type=2；
+#   换体系时按 data.lmp 实际类型修改 pair_style lj/cut/tip4p/long 的
+#   otype/htype/btype/atype 参数）
 
 
 def run_pipeline(cfg: Config) -> dict:
@@ -762,23 +749,24 @@ def _write_report(report: dict) -> None:
         '',
         '## LAMMPS 实跑验证（可选，建议集群跑）',
         '本机无 LAMMPS；将 data.lmp 交给 OpsAgent 代跑或自行在集群执行：',
-        '```lammps',
     ]
+    is_tip4p = False
     if cfg.water is not None:
         from solvent_templates import water_model
         wm = water_model(cfg.water.model)
-        if wm['nsite'] == 4:
-            lines.append(LAMMPS_IN_TEMPLATE_TIP4P.format(
-                data=os.path.basename(exp['data_lmp']),
-                qdist=f'{wm["om_dist"]:.4f}'))
-        else:
-            lines.append(LAMMPS_IN_TEMPLATE.format(
-                data=os.path.basename(exp['data_lmp'])))
+        is_tip4p = wm['nsite'] == 4
+    if is_tip4p:
+        lines.append(
+            f'4-site 水（{cfg.water.model}）in 示例见 '
+            f'examples/water_4site_lammps_test/{cfg.water.model}/'
+            f'in.{cfg.water.model}.lmp'
+            f'（与配套 data.lmp 绑定；换体系按实际类型修改）')
     else:
-        lines.append(LAMMPS_IN_TEMPLATE.format(
-            data=os.path.basename(exp['data_lmp'])))
+        lines += ['```lammps',
+                  LAMMPS_IN_TEMPLATE.format(
+                      data=os.path.basename(exp['data_lmp'])),
+                  '```']
     lines += [
-        '```',
         '通过判据: READ_DATA_OK + run 0 无 ERROR（VERIFY_EXIT=0）。',
     ]
     with open(path, 'w', encoding='utf-8') as f:

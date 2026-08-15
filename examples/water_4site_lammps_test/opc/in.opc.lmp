@@ -1,0 +1,26 @@
+# ============================================================
+# LAMMPS in 示例：OPC 4-site 水（LAMMPS 隐式 M 方案）
+# 配套体系: examples/water_4site_lammps_test/opc/
+#   input.yaml → work/data.lmp（甲烷 1 + OPC 水 20）
+#
+# 类型号（本示例体系 data.lmp）: 原子 1=c3(甲烷C) 2=hc(甲烷H) 3=OW 4=HW；
+#   O-H 键 type=2, H-O-H 角 type=2
+#   pair_style lj/cut/tip4p/long 语法:
+#     otype htype btype atype qdist cutoff
+#     = 3 4 2 2 <qdist> 10.0 （O=3, H=4；btype=O-H 键类型, atype=H-O-H 角类型）
+# 换用你自己的 data.lmp 时，按该文件 Masses/Bond Coeffs/Angle Coeffs 实际类型号修改。
+# 运行: 与 data.lmp 同目录  lmp -in in.opc.lmp
+# ============================================================
+units real
+atom_style full
+boundary p p p
+pair_style lj/cut/tip4p/long 3 4 2 2 0.1594 10.0
+pair_modify mix arithmetic
+bond_style harmonic
+angle_style harmonic
+dihedral_style fourier
+improper_style cvff
+special_bonds amber
+kspace_style pppm/tip4p 1e-4
+read_data data.lmp
+run 0

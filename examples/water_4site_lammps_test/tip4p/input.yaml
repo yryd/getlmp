@@ -1,0 +1,17 @@
+name: lammps_test_tip4p
+forcefield: gaff2
+charge_method: bcc
+net_charge: 0
+molecules:
+  - smiles: C
+    name: methane
+    count: 1
+    resname: MTH
+water:
+  model: tip4p
+  count: 20
+packmol:
+  box: [0, 0, 0, 20, 20, 20]
+output: data.lmp
+workdir: work
+seed: 2026

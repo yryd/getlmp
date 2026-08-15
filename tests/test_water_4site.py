@@ -119,14 +119,29 @@ def run_water_test(name: str, model: str,
         assert nbond == 44, f"键数 {nbond} != 44（每水 2 键，EP 键已删）\n{out}"
         assert nangle == 26, f"角数 {nangle} != 26（每水 1 角已补）\n{out}"
 
-        # 报告：4-site 信息 + tip4p 验证模板
+        # 报告：4-site 信息 + in 示例引用（4-site 报告不再内联模板，
+        # 改为指向 examples/water_4site_lammps_test/<model>/in.<model>.lmp）
         with open(report_path, encoding="utf-8") as f:
             report = f.read()
         assert "结论: 通过" in report, f"校验未通过:\n{report}"
         assert "4-site 虚拟位点: 丢弃 EPW 20 个" in report, \
             f"报告缺 EP 丢弃信息:\n{report}"
-        assert f"pair_style lj/cut/tip4p/long 10.0 {expect_om_qdist}" in report, \
-            f"报告缺 tip4p pair_style（qdist={expect_om_qdist}）:\n{report}"
+        in_rel = (f"examples/water_4site_lammps_test/{model}/"
+                  f"in.{model}.lmp")
+        assert in_rel in report, \
+            f"报告缺 in 示例引用（{in_rel}）:\n{report}"
+
+        # in 示例文件存在且 pair_style 语法正确（类型号按示例体系写死：
+        # O=3, H=4, O-H 键 type=2, H-O-H 角 type=2）
+        in_path = os.path.join(PROJECT_ROOT, in_rel)
+        assert os.path.exists(in_path), f"in 示例缺失: {in_path}"
+        with open(in_path, encoding="utf-8") as f:
+            in_text = f.read()
+        assert (f"pair_style lj/cut/tip4p/long 3 4 2 2 "
+                f"{expect_om_qdist} 10.0") in in_text, \
+            f"in 示例 pair_style 错误（qdist={expect_om_qdist}）:\n{in_text}"
+        assert "kspace_style pppm/tip4p 1e-4" in in_text, \
+            f"in 示例 kspace 应 pppm/tip4p:\n{in_text}"
 
 
 def test_tip4pew() -> None:
